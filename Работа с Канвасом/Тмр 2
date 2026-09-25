@@ -5,7 +5,8 @@
   let layer0Ctx = null;
   let layer1Ctx = null;
 
-  let showWorldGrid = true;
+  let showWorldGrid = false;
+  let showBombBoxes = false; // NEW: toggle for bomb timer overlay
   const blockPositions = {};
   const bombPositions = {};
   const shadowPositions = {};
@@ -100,9 +101,6 @@
   const MATCH_RADIUS = 60;
 
   // EDIT 2: camera compensation, sampled ONCE per frame (not per draw).
-  // Shifts every tracked bomb by the camera movement so scrolling isn't
-  // mistaken for the bomb moving. camMove is how far the camera moved this
-  // frame; it widens the match radius so a jolt can't break the match.
   let lastCamE = null, lastCamF = null, camSampledFrame = -1, camMove = 0;
   const compensateForCamera = (ctx) => {
     if (camSampledFrame === frameCount) return;
@@ -125,7 +123,7 @@
   };
 
   const drawBombBoxes = () => {
-    if (!layer1Ctx) return;
+    if (!layer1Ctx || !showBombBoxes) return; // CHANGED: gated by toggle
 
     const now = Date.now();
     layer1Ctx.save();
@@ -138,7 +136,6 @@
     for (const key in bombPositions) {
       const bomb = bombPositions[key];
 
-      // Simple non-pausing countdown from when the bomb was first seen.
       const elapsed = (now - bomb.placedTime) / 1000;
       const remaining = Math.max(0, 4.3 - elapsed);
 
@@ -161,8 +158,6 @@
       layer1Ctx.fillStyle = remaining > 1 ? '#0f0' : '#f00';
       layer1Ctx.fillText(remaining.toFixed(1), timerX, timerY);
 
-      // At 1 second or less remaining (until it explodes), draw a red
-      // dashed line 96px out from the bomb in each cardinal direction.
       if (remaining <= 1) {
         if (!bomb.blastLogged) {
           bomb.blastLogged = true;
@@ -220,12 +215,8 @@
     }
     if (isGreyOutline) return;
 
-    // Match existing bomb by proximity to its PREDICTED position
-    // (last center + last observed frame-to-frame displacement).
-    // EDIT 3: a bomb already matched to a draw THIS frame can't be matched
-    // again (stops bombs stealing each other's entries); a draw sitting
-    // right on top of an already-matched bomb is a duplicate draw, ignored.
-    // EDIT 4: radius is widened by how far the camera moved this frame.
+    // Bomb tracking bookkeeping keeps running even when boxes are hidden,
+    // so timers stay accurate the moment you toggle back on.
     const radius = MATCH_RADIUS + camMove;
     let existingKey = null;
     let minDist = Infinity;
@@ -363,42 +354,4 @@
         layer0Ctx = ctx;
         console.log('✓ World grid hooked - 32px tiles, 32x32 wrapped world');
       }
-      if (canvas.id === 'layer1' && !layer1Ctx) {
-        layer1Ctx = ctx;
-        console.log('✓ Bomb timer overlay hooked (predictive matching)');
-      }
-    }
-  };
-
-  patchPrototypeOnce();
-  hookAllCanvases();
-
-  const observer = new MutationObserver(hookAllCanvases);
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  // Fallback redraw in case no bomb drawImage happens for a tick.
-  setInterval(drawBombBoxes, 50);
-
-  window.toggleWorldGrid = () => {
-    showWorldGrid = !showWorldGrid;
-    console.log('World grid:', showWorldGrid ? 'ON' : 'OFF');
-  };
-  window.getBlockAt = (tileX, tileY) => {
-    const wrappedX = ((tileX % 32) + 32) % 32;
-    const wrappedY = ((tileY % 32) + 32) % 32;
-    return blockPositions[`${wrappedX},${wrappedY}`] || null;
-  };
-  window.getAllBlocks = () => Object.values(blockPositions);
-  window.getBlocksInArea = (startX, startY, endX, endY) => {
-    const blocks = [];
-    for (let x = startX; x <= endX; x++) {
-      for (let y = startY; y <= endY; y++) {
-        const block = window.getBlockAt(x, y);
-        if (block) blocks.push(block);
-      }
-    }
-    return blocks;
-  };
-
-  console.log('Combined overlay active: world grid + bomb timers (predictive matching, no throw/velocity tracking).');
-})();
+      if (canvas.id ===
