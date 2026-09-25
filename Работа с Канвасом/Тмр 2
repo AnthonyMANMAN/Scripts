@@ -6,7 +6,7 @@
   let layer1Ctx = null;
 
   let showWorldGrid = false;
-  let showBombBoxes = true; // NEW: toggle for bomb timer overlay
+  let showBombBoxes = false; // NEW: toggle for bomb timer overlay
   const blockPositions = {};
   const bombPositions = {};
   const shadowPositions = {};
