@@ -6,7 +6,7 @@
   let layer1Ctx = null;
 
   let showWorldGrid = false;
-  let showBombBoxes = false; // NEW: toggle for bomb timer overlay
+  let showBombBoxes = true; // toggles ONLY the bomb square outline
   const blockPositions = {};
   const bombPositions = {};
   const shadowPositions = {};
@@ -123,7 +123,7 @@
   };
 
   const drawBombBoxes = () => {
-    if (!layer1Ctx || !showBombBoxes) return; // CHANGED: gated by toggle
+    if (!layer1Ctx) return;
 
     const now = Date.now();
     layer1Ctx.save();
@@ -136,6 +136,7 @@
     for (const key in bombPositions) {
       const bomb = bombPositions[key];
 
+      // Simple non-pausing countdown from when the bomb was first seen.
       const elapsed = (now - bomb.placedTime) / 1000;
       const remaining = Math.max(0, 4.3 - elapsed);
 
@@ -145,8 +146,11 @@
       const bombCenterX = bomb.x + bomb.w / 2;
       const bombCenterY = bomb.y + bomb.h / 2;
 
+      // EDIT 5: box outline is the only thing gated by showBombBoxes
       const boxSize = 32;
-      layer1Ctx.strokeRect(bombCenterX - boxSize / 2, bombCenterY - boxSize / 2, boxSize, boxSize);
+      if (showBombBoxes) {
+        layer1Ctx.strokeRect(bombCenterX - boxSize / 2, bombCenterY - boxSize / 2, boxSize, boxSize);
+      }
 
       const timerX = bombCenterX + boxSize / 2 - 10;
       const timerY = bombCenterY - boxSize / 2 + 10;
@@ -158,6 +162,9 @@
       layer1Ctx.fillStyle = remaining > 1 ? '#0f0' : '#f00';
       layer1Ctx.fillText(remaining.toFixed(1), timerX, timerY);
 
+      // At 1 second or less remaining (until it explodes), draw a red
+      // dashed line 96px out from the bomb in each cardinal direction.
+      // Always drawn regardless of showBombBoxes.
       if (remaining <= 1) {
         if (!bomb.blastLogged) {
           bomb.blastLogged = true;
@@ -215,8 +222,12 @@
     }
     if (isGreyOutline) return;
 
-    // Bomb tracking bookkeeping keeps running even when boxes are hidden,
-    // so timers stay accurate the moment you toggle back on.
+    // Match existing bomb by proximity to its PREDICTED position
+    // (last center + last observed frame-to-frame displacement).
+    // EDIT 3: a bomb already matched to a draw THIS frame can't be matched
+    // again (stops bombs stealing each other's entries); a draw sitting
+    // right on top of an already-matched bomb is a duplicate draw, ignored.
+    // EDIT 4: radius is widened by how far the camera moved this frame.
     const radius = MATCH_RADIUS + camMove;
     let existingKey = null;
     let minDist = Infinity;
@@ -374,9 +385,9 @@
     showWorldGrid = !showWorldGrid;
     console.log('World grid:', showWorldGrid ? 'ON' : 'OFF');
   };
-  window.toggleBombBoxes = () => { // NEW
+  window.toggleBombBoxes = () => {
     showBombBoxes = !showBombBoxes;
-    console.log('Bomb boxes:', showBombBoxes ? 'ON' : 'OFF');
+    console.log('Bomb boxes:', showBombBoxes ? 'ON' : 'OFF', '(timer & blast lines unaffected)');
   };
   window.getBlockAt = (tileX, tileY) => {
     const wrappedX = ((tileX % 32) + 32) % 32;
