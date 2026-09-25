@@ -6,7 +6,7 @@
   let layer1Ctx = null;
 
   let showWorldGrid = false;
-  let showBombBoxes = false; // NEW: toggle for bomb timer overlay
+  let showBombBoxes = true; // NEW: toggle for bomb timer overlay
   const blockPositions = {};
   const bombPositions = {};
   const shadowPositions = {};
@@ -354,4 +354,46 @@
         layer0Ctx = ctx;
         console.log('✓ World grid hooked - 32px tiles, 32x32 wrapped world');
       }
-      if (canvas.id ===
+      if (canvas.id === 'layer1' && !layer1Ctx) {
+        layer1Ctx = ctx;
+        console.log('✓ Bomb timer overlay hooked (predictive matching)');
+      }
+    }
+  };
+
+  patchPrototypeOnce();
+  hookAllCanvases();
+
+  const observer = new MutationObserver(hookAllCanvases);
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // Fallback redraw in case no bomb drawImage happens for a tick.
+  setInterval(drawBombBoxes, 50);
+
+  window.toggleWorldGrid = () => {
+    showWorldGrid = !showWorldGrid;
+    console.log('World grid:', showWorldGrid ? 'ON' : 'OFF');
+  };
+  window.toggleBombBoxes = () => { // NEW
+    showBombBoxes = !showBombBoxes;
+    console.log('Bomb boxes:', showBombBoxes ? 'ON' : 'OFF');
+  };
+  window.getBlockAt = (tileX, tileY) => {
+    const wrappedX = ((tileX % 32) + 32) % 32;
+    const wrappedY = ((tileY % 32) + 32) % 32;
+    return blockPositions[`${wrappedX},${wrappedY}`] || null;
+  };
+  window.getAllBlocks = () => Object.values(blockPositions);
+  window.getBlocksInArea = (startX, startY, endX, endY) => {
+    const blocks = [];
+    for (let x = startX; x <= endX; x++) {
+      for (let y = startY; y <= endY; y++) {
+        const block = window.getBlockAt(x, y);
+        if (block) blocks.push(block);
+      }
+    }
+    return blocks;
+  };
+
+  console.log('Combined overlay active: world grid + bomb timers (predictive matching, no throw/velocity tracking).');
+})();
