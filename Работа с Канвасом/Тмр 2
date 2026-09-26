@@ -6,7 +6,7 @@
   let layer1Ctx = null;
 
   let showWorldGrid = false;
-  let showBombBoxes = true; // toggles ONLY the bomb square outline
+  let showBombBoxes = false; // toggles ONLY the bomb square outline
   const blockPositions = {};
   const bombPositions = {};
   const shadowPositions = {};
