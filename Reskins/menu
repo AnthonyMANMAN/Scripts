@@ -1,0 +1,20 @@
+// Remove any previous purple-override style tags to avoid duplicates
+document.querySelectorAll('style[data-purple-override]').forEach(s => s.remove());
+
+const style = document.createElement('style');
+style.setAttribute('data-purple-override', 'true');
+style.textContent = `
+  div.butt_left_menu.to-play.ng-binding,
+  #text,
+  div.half.l,
+  div.half.l.ng-scope,
+  .tab-item {
+    color: purple !important;
+    border-color: purple !important;
+  }
+  div.wrap-inner.padd-3.ng-scope::before {
+    color: purple !important;
+    border-color: purple !important;
+  }
+`;
+document.head.appendChild(style);
