@@ -25,7 +25,7 @@
     // ============================================================
     const CONFIG = {
         tilesetOriginal: 'tileset.png?v=6',
-        tilesetReplacement: 'https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/main/Reskins/dark.png',
+        tilesetReplacement: 'https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/main/Reskins/dark1.png',
         explosionPattern: /explosion\.png/i,
         bombFuseSeconds: 4.3,
         skinCycleMs: 100,
