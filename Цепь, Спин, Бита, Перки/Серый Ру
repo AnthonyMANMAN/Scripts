@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Game of Bombs - Unified White Mod Pack RU
+// @name         Game of Bombs — Русская панель с настройкой клавиш
 // @namespace    http://tampermonkey.net/
-// @version      1.1.3-RU
-// @description  Русская версия: белая тема/огонь, осенний тайлсет, таймер бомб, сетка, Auto Chain, K-Stick, смена скинов, телепорт и WS Freeze.
+// @version      2.0.3
+// @description  Белая тема, таймеры и сетка, русская панель, настраиваемые клавиши EN/RU, автоцепь, удержание и телепорт (заморозка сети).
 // @author       You
 // @match        https://gameofbombs.com/*
 // @match        http://gameofbombs.com/*
@@ -28,7 +28,6 @@
         tilesetReplacement: 'https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/main/Reskins/dark1.png',
         explosionPattern: /explosion\.png/i,
         bombFuseSeconds: 4.3,
-        skinCycleMs: 100,
         autoChainMs: 20,
         wsUi: false
     };
@@ -192,6 +191,7 @@
 
     const blockPositions = Object.create(null);
     const bombPositions = Object.create(null);
+    const shadowPositions = Object.create(null);
 
     const PROTO_PATCH_FLAG = '__gobUnifiedCanvasPatched';
     const MATCH_RADIUS = 60;
@@ -200,44 +200,20 @@
     let nextBombId = 1;
     let overlayScheduled = false;
 
-    // Independent transparent surface: the game's clears cannot erase timers.
-    let timerCanvas = null;
-    let timerCtx = null;
-
-    function prepareTimerSurface() {
-        if (!layer1Ctx || !layer1Ctx.canvas.isConnected) return false;
-        const source = layer1Ctx.canvas;
-        const rect = source.getBoundingClientRect();
-        if (!rect.width || !rect.height || !source.width || !source.height) {
-            if (timerCanvas) timerCanvas.style.display = 'none';
-            return false;
-        }
-        if (!timerCanvas) {
-            timerCanvas = document.createElement('canvas');
-            timerCanvas.id = '__gobBombTimers';
-            timerCanvas.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483646;';
-            document.documentElement.appendChild(timerCanvas);
-            timerCtx = timerCanvas.getContext('2d');
-        }
-        if (timerCanvas.width !== source.width) timerCanvas.width = source.width;
-        if (timerCanvas.height !== source.height) timerCanvas.height = source.height;
-        timerCanvas.style.display = 'block';
-        timerCanvas.style.left = rect.left + 'px';
-        timerCanvas.style.top = rect.top + 'px';
-        timerCanvas.style.width = rect.width + 'px';
-        timerCanvas.style.height = rect.height + 'px';
-        return true;
-    }
+    // One tiny RAF counter is enough for per-frame bomb matching.
+    const frameTick = () => {
+        frameCount++;
+        requestAnimationFrame(frameTick);
+    };
+    requestAnimationFrame(frameTick);
 
     function scheduleBombOverlay() {
         if (overlayScheduled) return;
         overlayScheduled = true;
+
         requestAnimationFrame(() => {
             overlayScheduled = false;
             drawBombBoxes();
-            frameCount++;
-            // Stops completely once the last bomb disappears.
-            if (Object.keys(bombPositions).length) scheduleBombOverlay();
         });
     }
 
@@ -355,23 +331,18 @@
     }
 
     function drawBombBoxes() {
-        if (!prepareTimerSurface()) {
-            for (const key in bombPositions) delete bombPositions[key];
-            if (timerCtx) timerCtx.clearRect(0, 0, timerCanvas.width, timerCanvas.height);
-            return;
-        }
-        timerCtx.clearRect(0, 0, timerCanvas.width, timerCanvas.height);
+        if (!layer1Ctx) return;
 
         const keys = Object.keys(bombPositions);
         if (keys.length === 0) return;
 
         const now = performance.now();
 
-        timerCtx.save();
-        timerCtx.lineWidth = 3;
-        timerCtx.font = 'bold 12px Arial';
-        timerCtx.textAlign = 'center';
-        timerCtx.textBaseline = 'middle';
+        layer1Ctx.save();
+        layer1Ctx.lineWidth = 3;
+        layer1Ctx.font = 'bold 12px Arial';
+        layer1Ctx.textAlign = 'center';
+        layer1Ctx.textBaseline = 'middle';
 
         for (const key of keys) {
             const bomb = bombPositions[key];
@@ -389,9 +360,9 @@
             const boxSize = 32;
 
             if (showBombBoxes) {
-                timerCtx.strokeStyle = '#ffffff';
-                timerCtx.setLineDash([]);
-                timerCtx.strokeRect(
+                layer1Ctx.strokeStyle = '#ffffff';
+                layer1Ctx.setLineDash([]);
+                layer1Ctx.strokeRect(
                     bombCenterX - boxSize / 2,
                     bombCenterY - boxSize / 2,
                     boxSize,
@@ -402,34 +373,37 @@
             const timerX = bombCenterX + boxSize / 2 - 10;
             const timerY = bombCenterY - boxSize / 2 + 10;
 
-            timerCtx.fillStyle = 'rgba(0,0,0,0.72)';
-            timerCtx.beginPath();
-            timerCtx.arc(timerX, timerY, 10, 0, Math.PI * 2);
-            timerCtx.fill();
+            layer1Ctx.fillStyle = 'rgba(0,0,0,0.72)';
+            layer1Ctx.beginPath();
+            layer1Ctx.arc(timerX, timerY, 10, 0, Math.PI * 2);
+            layer1Ctx.fill();
 
-            timerCtx.fillStyle = remaining <= 1 ? '#ff4444' : '#66ff66';
-            timerCtx.fillText(remaining.toFixed(1), timerX, timerY);
+            layer1Ctx.fillStyle = '#ffffff';
+            layer1Ctx.fillText(remaining.toFixed(1), timerX, timerY);
 
             if (remaining <= 1) {
-                timerCtx.save();
-                timerCtx.globalAlpha = 1;
-                timerCtx.strokeStyle = '#ff4444';
-                timerCtx.lineWidth = 4;
-                timerCtx.setLineDash([8, 6]);
+                layer1Ctx.save();
+                layer1Ctx.globalAlpha = 1;
+                layer1Ctx.strokeStyle = '#ffffff';
+                layer1Ctx.lineWidth = 4;
+                layer1Ctx.setLineDash([8, 6]);
 
                 const blastLen = 96;
-                timerCtx.beginPath();
-                timerCtx.moveTo(bombCenterX, bombCenterY - blastLen);
-                timerCtx.lineTo(bombCenterX, bombCenterY + blastLen);
-                timerCtx.moveTo(bombCenterX - blastLen, bombCenterY);
-                timerCtx.lineTo(bombCenterX + blastLen, bombCenterY);
-                timerCtx.stroke();
-                timerCtx.restore();
+                layer1Ctx.beginPath();
+                layer1Ctx.moveTo(bombCenterX, bombCenterY - blastLen);
+                layer1Ctx.lineTo(bombCenterX, bombCenterY + blastLen);
+                layer1Ctx.moveTo(bombCenterX - blastLen, bombCenterY);
+                layer1Ctx.lineTo(bombCenterX + blastLen, bombCenterY);
+                layer1Ctx.stroke();
+                layer1Ctx.restore();
             }
         }
 
-        timerCtx.restore();
+        layer1Ctx.restore();
     }
+
+    let lastFillWasGrey = false;
+    let lastGlobalAlpha = 1;
 
     function handleLayer1DrawImage(ctx, image, args) {
         if (
@@ -442,19 +416,38 @@
             return;
         }
 
-        // Read the current context, rather than a stale alpha/fill setter value.
-        if (ctx.globalAlpha < 0.8) return;
-        const transform = ctx.getTransform();
-        const left = transform.a * args[4] + transform.c * args[5] + transform.e;
-        const top = transform.b * args[4] + transform.d * args[5] + transform.f;
-        const w = transform.a * args[6] + transform.c * args[7];
-        const h = transform.b * args[6] + transform.d * args[7];
-        const x = left;
-        const y = top;
+        const x = args[4];
+        const y = args[5];
+        const w = args[6];
+        const h = args[7];
         const currentTime = performance.now();
+
         const screenCenterX = x + w / 2;
         const screenCenterY = y + h / 2;
-        layer1Ctx = ctx;
+
+        const isShadow = lastFillWasGrey && w >= 50 && w <= 70 && h >= 50 && h <= 70;
+        const isGreyOutline = (lastFillWasGrey && !isShadow) || lastGlobalAlpha < 0.8;
+
+        if (lastFillWasGrey) lastFillWasGrey = false;
+        lastGlobalAlpha = 1;
+
+        if (isShadow) {
+            const shadowKey = 'shadow_' + Math.round(screenCenterX / 8) + '_' + Math.round(screenCenterY / 8);
+            shadowPositions[shadowKey] = {
+                x: screenCenterX,
+                y: screenCenterY,
+                lastSeen: currentTime
+            };
+
+            for (const key in shadowPositions) {
+                if (currentTime - shadowPositions[key].lastSeen > 250) {
+                    delete shadowPositions[key];
+                }
+            }
+            return;
+        }
+
+        if (isGreyOutline) return;
 
         const radius = MATCH_RADIUS + camMove;
         let existingKey = null;
@@ -479,17 +472,18 @@
 
             const predictedX = bombCenterX + (bomb.lastDX || 0);
             const predictedY = bombCenterY + (bomb.lastDY || 0);
-            const dx = screenCenterX - predictedX;
-            const dy = screenCenterY - predictedY;
-            const dist = dx * dx + dy * dy;
+            const dist = Math.hypot(
+                screenCenterX - predictedX,
+                screenCenterY - predictedY
+            );
 
-            if (dist < radius * radius && dist < minDist) {
+            if (dist < radius && dist < minDist) {
                 minDist = dist;
                 existingKey = key;
             }
         }
 
-        if (duplicate) { scheduleBombOverlay(); return; }
+        if (duplicate) return;
 
         if (existingKey) {
             const bomb = bombPositions[existingKey];
@@ -528,9 +522,48 @@
         });
 
         const originalDrawImage = proto.drawImage;
+        const originalFillRect = proto.fillRect;
         const originalSave = proto.save;
         const originalRestore = proto.restore;
+        const alphaDesc = Object.getOwnPropertyDescriptor(proto, 'globalAlpha');
         const saveCounts = new WeakMap();
+
+        if (alphaDesc && alphaDesc.get && alphaDesc.set) {
+            Object.defineProperty(proto, 'globalAlpha', {
+                configurable: true,
+                enumerable: alphaDesc.enumerable,
+                get() {
+                    return alphaDesc.get.call(this);
+                },
+                set(value) {
+                    if (this.canvas && this.canvas.id === 'layer1') {
+                        lastGlobalAlpha = value;
+                    }
+                    alphaDesc.set.call(this, value);
+                }
+            });
+        }
+
+        proto.fillRect = function (...args) {
+            if (this.canvas && this.canvas.id === 'layer1') {
+                const fillStyle = this.fillStyle;
+                if (typeof fillStyle === 'string') {
+                    const lower = fillStyle.toLowerCase();
+                    const hex = lower.match(/^#([0-9a-f]{6})$/);
+
+                    lastFillWasGrey =
+                        lower.includes('grey') ||
+                        lower.includes('gray') ||
+                        Boolean(
+                            hex &&
+                            hex[1].slice(0, 2) === hex[1].slice(2, 4) &&
+                            hex[1].slice(2, 4) === hex[1].slice(4, 6)
+                        );
+                }
+            }
+
+            return originalFillRect.apply(this, args);
+        };
 
         proto.save = function (...args) {
             if (this.canvas && this.canvas.id === 'layer0') {
@@ -646,412 +679,222 @@
         return blocks;
     };
 
-    // ============================================================
-    // 4) AUTO CHAIN + K-STICK + SKIN CYCLER
-    // ============================================================
+    // 4) Настраиваемые клавиши и русская панель
+    const STORAGE_KEY = '__gobUnifiedRuKeysV2';
+    const defaults = {
+        actionKey: 'KeyK',
+        chainHotkey: 'KeyJ', stickHotkey: 'KeyL', teleportHotkey: 'KeyZ'
+    };
+    const keyInfo = new Map();
+    const en = 'qwertyuiop[]asdfghjkl;\'zxcvbnm,.';
+    const ru = 'йцукенгшщзхъфывапролджэячсмитьбю';
+    const punctuation = { '[': 'BracketLeft', ']': 'BracketRight', ';': 'Semicolon', "'": 'Quote', ',': 'Comma', '.': 'Period' };
+    for (let i = 0; i < en.length; i++) {
+        const code = punctuation[en[i]] || 'Key' + en[i].toUpperCase();
+        keyInfo.set(code, { key: en[i], ru: ru[i], keyCode: punctuation[en[i]] ? ({BracketLeft:219,BracketRight:221,Semicolon:186,Quote:222,Comma:188,Period:190})[code] : en[i].toUpperCase().charCodeAt(0) });
+    }
+    for (let i = 0; i <= 9; i++) keyInfo.set('Digit' + i, { key: String(i), keyCode: 48 + i });
+    for (let i = 1; i <= 12; i++) keyInfo.set('F' + i, { key: 'F' + i, keyCode: 111 + i });
+    for (const [code, key, keyCode] of [['Space',' ',32],['Enter','Enter',13],['Tab','Tab',9],['Backspace','Backspace',8],['Escape','Escape',27],['ArrowLeft','ArrowLeft',37],['ArrowUp','ArrowUp',38],['ArrowRight','ArrowRight',39],['ArrowDown','ArrowDown',40],['Minus','-',189],['Equal','=',187],['Backquote','`',192],['Backslash','\\',220],['Delete','Delete',46],['Home','Home',36],['End','End',35],['PageUp','PageUp',33],['PageDown','PageDown',34]]) keyInfo.set(code,{key,keyCode,ru:code==='Backquote'?'ё':undefined});
+    function eventCode(event) {
+        if (keyInfo.has(event.code)) return event.code;
+        const key = String(event.key || '').toLowerCase();
+        for (const [code, info] of keyInfo) if (info.key.toLowerCase() === key || info.ru === key) return code;
+        return null;
+    }
+    function keyLabel(code) {
+        const info = keyInfo.get(code);
+        if (!info) return '—';
+        const labels = {Space:'Пробел',Enter:'Enter',Tab:'Tab',Backspace:'Backspace',Escape:'Esc',ArrowLeft:'←',ArrowRight:'→',ArrowUp:'↑',ArrowDown:'↓'};
+        return (labels[code] || info.key.toUpperCase()) + (info.ru ? ' / ' + info.ru.toUpperCase() : '');
+    }
+    let bindings = { ...defaults };
+    try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+        if (!saved.actionKey) saved.actionKey = saved.chainKey || saved.stickKey;
+        for (const name of Object.keys(defaults)) if (keyInfo.has(saved[name])) bindings[name] = saved[name];
+    } catch {}
     let autoChainActive = false;
     let autoChainInterval = null;
-
+    let pulseReleaseTimer = null;
+    let pulseHeldCode = null;
     let kStuck = false;
-    let preventKKeyUp = null;
-
-    let skinCyclerActive = false;
-    let skinCyclerInterval = null;
-    let skinCyclerCurrentIndex = 0;
-    let skinCyclerSkinsList = [];
-    let skinCyclerScope = null;
-
     let featureUi = null;
-    let chainUiBtn = null;
-    let kStickUiBtn = null;
-    let skinUiBtn = null;
-    let teleportUiBtn = null;
-
-    function isTypingTarget(target) {
-        return !!target && (
-            target.tagName === 'INPUT' ||
-            target.tagName === 'TEXTAREA' ||
-            target.isContentEditable
-        );
-    }
-
-    function autoChainPulse() {
-        if (!autoChainActive) return;
-
-        const down = new KeyboardEvent('keydown', {
-            key: 'k',
-            code: 'KeyK',
-            keyCode: 75,
-            which: 75,
-            bubbles: true
-        });
-
-        const up = new KeyboardEvent('keyup', {
-            key: 'k',
-            code: 'KeyK',
-            keyCode: 75,
-            which: 75,
-            bubbles: true
-        });
-
-        document.dispatchEvent(down);
-        setTimeout(() => {
-            if (autoChainActive) document.dispatchEvent(up);
-        }, 10);
-    }
-
-    function stopAutoChain() {
-        if (autoChainInterval) {
-            clearInterval(autoChainInterval);
-            autoChainInterval = null;
+    let menuOpenButton = null;
+    let menuHidden = false;
+    try { menuHidden = localStorage.getItem(STORAGE_KEY + ':hidden') === '1'; } catch {}
+    function setMenuHidden(hidden) {
+        menuHidden = Boolean(hidden);
+        if (menuHidden && captureName) {
+            captureName = null;
+            if (settingsNotice) settingsNotice.textContent = 'Изменение отменено.';
+            updateFeatureUi();
         }
+        if (featureUi) featureUi.style.display = menuHidden ? 'none' : 'block';
+        if (menuOpenButton) menuOpenButton.style.display = menuHidden ? 'block' : 'none';
+        try { localStorage.setItem(STORAGE_KEY + ':hidden', menuHidden ? '1' : '0'); } catch {}
     }
-
+    let chainUiBtn, kStickUiBtn, teleportUiBtn, queueFeatureLabel;
+    let captureName = null;
+    const capturedCodes = new Set();
+    const bindingButtons = new Map();
+    const hotkeyBadges = new Map();
+    const syntheticKeys = new WeakSet();
+    let settingsNotice = null;
+    function isTypingTarget(target) {
+        return !!target && (target.isContentEditable || !!target.closest?.('input,textarea,select,[contenteditable="true"]'));
+    }
+    function sendKey(type, code) {
+        const info = keyInfo.get(code);
+        if (!info) return;
+        const event = new KeyboardEvent(type, {key:info.key,code,keyCode:info.keyCode,which:info.keyCode,bubbles:true,cancelable:true});
+        // Legacy game handlers may read keyCode/which instead of code.
+        for (const prop of ['keyCode','which']) if (event[prop] !== info.keyCode) Object.defineProperty(event,prop,{value:info.keyCode});
+        syntheticKeys.add(event);
+        document.dispatchEvent(event);
+    }
+    function releasePulse() {
+        if (pulseReleaseTimer !== null) clearTimeout(pulseReleaseTimer);
+        pulseReleaseTimer = null;
+        if (pulseHeldCode) sendKey('keyup', pulseHeldCode);
+        pulseHeldCode = null;
+    }
+    function autoChainPulse() {
+        if (!autoChainActive || captureName || isTypingTarget(document.activeElement) || document.hidden) return;
+        releasePulse();
+        const code = bindings.actionKey;
+        pulseHeldCode = code;
+        sendKey('keydown',code);
+        pulseReleaseTimer = setTimeout(releasePulse,10);
+    }
+    function stopAutoChain() {
+        if (autoChainInterval !== null) clearInterval(autoChainInterval);
+        autoChainInterval = null;
+        releasePulse();
+    }
     function toggleAutoChain() {
         autoChainActive = !autoChainActive;
-
-        if (autoChainActive) {
-            stopAutoChain();
-            autoChainInterval = setInterval(autoChainPulse, CONFIG.autoChainMs);
-        } else {
-            stopAutoChain();
-        }
-
-        log('Авто-цепь:', autoChainActive ? 'ВКЛ' : 'ВЫКЛ');
+        stopAutoChain();
+        if (autoChainActive) autoChainInterval = setInterval(autoChainPulse,CONFIG.autoChainMs);
         updateFeatureUi();
         return autoChainActive;
     }
-
     function toggleKStick() {
-        if (!kStuck) {
-            preventKKeyUp = event => {
-                if (event.code === 'KeyK') {
-                    event.preventDefault();
-                    event.stopImmediatePropagation();
-                }
-            };
-
-            document.addEventListener('keyup', preventKKeyUp, true);
-            kStuck = true;
-        } else {
-            if (preventKKeyUp) {
-                document.removeEventListener('keyup', preventKKeyUp, true);
-                preventKKeyUp = null;
-            }
-            kStuck = false;
-        }
-
-        log('K-Stick:', kStuck ? 'ВКЛ' : 'ВЫКЛ');
+        kStuck = !kStuck;
+        if (!kStuck) sendKey('keyup',bindings.actionKey);
         updateFeatureUi();
         return kStuck;
     }
-
-    function initializeSkinCycler() {
-        const angular = window.angular;
-        if (!angular) return false;
-
-        const skinsElement = document.querySelector('[ng-repeat*="skin in group.skins"]');
-        if (!skinsElement) return false;
-
-        let scope = angular.element(skinsElement).scope();
-        if (!scope) return false;
-
-        let parent = scope;
-        while (parent && !parent.group) parent = parent.$parent;
-
-        if (!parent || !parent.group || !Array.isArray(parent.group.skins)) {
-            return false;
-        }
-
-        skinCyclerSkinsList = parent.group.skins;
-
-        // Find and cache an activation scope ONCE, not every 100 ms.
-        let activationScope = parent;
-        while (
-            activationScope &&
-            typeof activationScope.activateSkin !== 'function'
-        ) {
-            activationScope = activationScope.$parent;
-        }
-
-        if (!activationScope) {
-            const activationElement = document.querySelector('[ng-click*="activateSkin"]');
-            if (activationElement) {
-                activationScope = angular.element(activationElement).scope();
-            }
-        }
-
-        if (!activationScope || typeof activationScope.activateSkin !== 'function') {
-            return false;
-        }
-
-        skinCyclerScope = activationScope;
-        return skinCyclerSkinsList.length > 0;
-    }
-
-    function activateSkin(skin) {
-        const scope = skinCyclerScope;
-        if (!scope || scope.$$destroyed || typeof scope.activateSkin !== 'function') {
-            skinCyclerScope = null;
-            if (!initializeSkinCycler()) return false;
-        }
-
-        const targetScope = skinCyclerScope;
-        const run = () => {
-            if (typeof targetScope.selectSkin === 'function') {
-                targetScope.selectSkin(skin);
-            }
-            targetScope.activateSkin(skin);
-        };
-
-        // Avoid "$digest already in progress" errors.
-        if (targetScope.$root && targetScope.$root.$$phase) {
-            run();
-        } else if (typeof targetScope.$apply === 'function') {
-            targetScope.$apply(run);
-        } else {
-            run();
-        }
-
-        return true;
-    }
-
-    function cycleSkin() {
-        if (!skinCyclerActive) return;
-
-        if (!skinCyclerSkinsList.length && !initializeSkinCycler()) {
-            stopSkinCycler();
-            log('Смена скинов: скины не найдены. Сначала один раз откройте страницу скинов.');
-            return;
-        }
-
-        if (skinCyclerSkinsList.length <= 1) return;
-
-        skinCyclerCurrentIndex++;
-        if (skinCyclerCurrentIndex >= skinCyclerSkinsList.length) {
-            skinCyclerCurrentIndex = 1;
-        }
-
-        activateSkin(skinCyclerSkinsList[skinCyclerCurrentIndex]);
-    }
-
-    function startSkinCycler() {
-        if (skinCyclerActive) return true;
-
-        if (!initializeSkinCycler()) {
-            log('Смена скинов: скины не найдены. Сначала один раз откройте страницу скинов.');
-            return false;
-        }
-
-        skinCyclerActive = true;
-        skinCyclerInterval = setInterval(cycleSkin, CONFIG.skinCycleMs);
-        log('Смена скинов: ВКЛ');
-        updateFeatureUi();
-        return true;
-    }
-
-    function stopSkinCycler() {
-        skinCyclerActive = false;
-
-        if (skinCyclerInterval) {
-            clearInterval(skinCyclerInterval);
-            skinCyclerInterval = null;
-        }
-
-        updateFeatureUi();
-        return false;
-    }
-
-    function toggleSkinCycler() {
-        if (skinCyclerActive) {
-            stopSkinCycler();
-            log('Смена скинов: ВЫКЛ');
-            return false;
-        }
-        return startSkinCycler();
-    }
-
-
     function triggerTeleport() {
-        // The attached script does not contain teleport movement logic.
-        // This button triggers the common T shortcut so an existing teleport
-        // handler in the page / another module can receive it without polling.
-        const down = new KeyboardEvent('keydown', {
-            key: 'z',
-            code: 'KeyZ',
-            keyCode: 90,
-            which: 90,
-            bubbles: true
-        });
-        const up = new KeyboardEvent('keyup', {
-            key: 'z',
-            code: 'KeyZ',
-            keyCode: 90,
-            which: 90,
-            bubbles: true
-        });
-        document.dispatchEvent(down);
-        document.dispatchEvent(up);
-
-        if (teleportUiBtn) {
-            teleportUiBtn.textContent = 'ГОТОВО';
-            teleportUiBtn.style.background = '#ffffff';
-            teleportUiBtn.style.color = '#111111';
-            setTimeout(updateFeatureUi, 220);
-        }
+        return toggleWsFreeze();
     }
-
     function styleFeatureButton(button) {
         button.type = 'button';
-        button.style.cssText = [
-            "min-width:58px",
-            "height:25px",
-            "padding:0 9px",
-            "border:1px solid rgba(255,255,255,.28)",
-            "border-radius:6px",
-            "background:#202020",
-            "color:#f5f5f5",
-            "font:600 10px/1 monospace",
-            "letter-spacing:.04em",
-            "cursor:pointer",
-            "transition:background .12s ease,border-color .12s ease,color .12s ease,transform .08s ease"
-        ].join(';');
-        button.addEventListener('mouseenter', () => {
-            button.style.borderColor = '#d9a6ff';
-        });
-        button.addEventListener('mouseleave', updateFeatureUi);
-        button.addEventListener('mousedown', () => {
-            button.style.transform = 'translateY(1px)';
-        });
-        button.addEventListener('mouseup', () => {
-            button.style.transform = 'translateY(0)';
-        });
+        button.style.cssText = 'padding:5px 8px;border:1px solid rgba(217,166,255,.38);border-radius:5px;background:#202020;color:#fff;font:11px monospace;cursor:pointer';
     }
-
-    function setFeatureButtonState(button, active, activeText, inactiveText) {
+    function setFeatureButtonState(button,active) {
         if (!button) return;
-        button.textContent = active ? activeText : inactiveText;
-        button.style.background = active ? '#ffffff' : '#202020';
-        button.style.color = active ? '#111111' : '#f5f5f5';
-        button.style.borderColor = active ? '#d9a6ff' : 'rgba(255,255,255,.28)';
-        button.style.boxShadow = active ? '0 0 0 1px rgba(217,166,255,.16)' : 'none';
+        button.textContent = active ? 'ВКЛ' : 'ВЫКЛ';
+        button.style.background = active ? '#d9a6ff' : '#202020';
+        button.style.color = active ? '#111' : '#fff';
     }
-
     function updateFeatureUi() {
-        setFeatureButtonState(chainUiBtn, autoChainActive, 'ВКЛ', 'ВЫКЛ');
-        setFeatureButtonState(kStickUiBtn, kStuck, 'ВКЛ', 'ВЫКЛ');
-        setFeatureButtonState(skinUiBtn, skinCyclerActive, 'ВКЛ', 'ВЫКЛ');
-
-        if (teleportUiBtn && teleportUiBtn.textContent !== 'ГОТОВО') {
-            teleportUiBtn.textContent = 'ПУСК';
-            teleportUiBtn.style.background = '#202020';
-            teleportUiBtn.style.color = '#f5f5f5';
-            teleportUiBtn.style.borderColor = 'rgba(255,255,255,.28)';
-            teleportUiBtn.style.boxShadow = 'none';
-        }
+        setFeatureButtonState(chainUiBtn,autoChainActive);
+        setFeatureButtonState(kStickUiBtn,kStuck);
+        setFeatureButtonState(teleportUiBtn,wsFrozen);
+        if (queueFeatureLabel) queueFeatureLabel.textContent = 'Пакетов в очереди: ' + wsQueue.length;
+        for (const [name, button] of bindingButtons) button.textContent = captureName === name ? 'Нажмите клавишу…' : keyLabel(bindings[name]);
+        for (const [name, badge] of hotkeyBadges) badge.textContent = keyLabel(bindings[name]);
     }
-
+    function saveBindings() {
+        try { localStorage.setItem(STORAGE_KEY,JSON.stringify(bindings)); settingsNotice.textContent = 'Сохранено автоматически.'; }
+        catch { settingsNotice.textContent = 'Не удалось сохранить. Настройки действуют до перезагрузки.'; }
+    }
     function createFeatureUi() {
         if (featureUi || !document.body) return;
-
         featureUi = document.createElement('div');
         featureUi.id = '__gobUnifiedFeatureUi';
-        featureUi.style.cssText = [
-            "position:fixed",
-            "right:18px",
-            "bottom:18px",
-            "z-index:999999",
-            "width:214px",
-            "padding:10px",
-            "border:1px solid rgba(255,255,255,.23)",
-            "border-radius:9px",
-            "background:rgba(16,16,18,.94)",
-            "color:#ffffff",
-            "font:11px/1.2 monospace",
-            "box-shadow:0 5px 18px rgba(0,0,0,.42)",
-            "backdrop-filter:blur(4px)",
-            "user-select:none"
-        ].join(';');
-
-        const header = document.createElement('div');
-        header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin:0 1px 8px;padding-bottom:7px;border-bottom:1px solid rgba(217,166,255,.22)';
-
-        const title = document.createElement('span');
+        featureUi.lang = 'ru';
+        featureUi.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:999999;width:310px;max-width:calc(100vw - 36px);max-height:80vh;overflow:auto;box-sizing:border-box;padding:12px;border:1px solid rgba(217,166,255,.4);border-radius:9px;background:rgba(16,16,18,.96);color:#fff;font:12px/1.4 monospace;box-shadow:0 5px 18px #0007';
+        const title = document.createElement('div');
         title.textContent = 'УПРАВЛЕНИЕ GOB';
-        title.style.cssText = 'font-weight:700;letter-spacing:.11em;font-size:10px;color:#ffffff';
-
-        const accent = document.createElement('span');
-        accent.textContent = 'РУС';
-        accent.style.cssText = 'font-size:9px;letter-spacing:.08em;color:#d9a6ff';
-        header.append(title, accent);
-
-        function makeRow(name, key, button, clickHandler) {
-            const row = document.createElement('div');
-            row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:31px';
-
-            const left = document.createElement('div');
-            left.style.cssText = 'display:flex;align-items:center;gap:7px;min-width:0';
-
-            const keyBox = document.createElement('span');
-            keyBox.textContent = key;
-            keyBox.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:21px;height:19px;border:1px solid rgba(217,166,255,.38);border-radius:4px;color:#d9a6ff;font-size:9px;font-weight:700;background:rgba(217,166,255,.06)';
-
-            const label = document.createElement('span');
-            label.textContent = name;
-            label.style.cssText = 'white-space:nowrap;color:#eeeeee';
-
-            left.append(keyBox, label);
-            styleFeatureButton(button);
-            button.addEventListener('click', clickHandler);
-            row.append(left, button);
-            return row;
+        title.style.cssText = 'color:#d9a6ff;font-weight:bold;margin-bottom:8px';
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px';
+        title.style.marginBottom = '0';
+        const hideButton = document.createElement('button');
+        styleFeatureButton(hideButton);
+        hideButton.textContent = 'Скрыть';
+        hideButton.title = 'Скрыть панель. Горячие клавиши продолжат работать.';
+        hideButton.addEventListener('click', () => setMenuHidden(true));
+        header.append(title, hideButton);
+        featureUi.append(header);
+        menuOpenButton = document.createElement('button');
+        menuOpenButton.id = '__gobUnifiedOpenMenu';
+        styleFeatureButton(menuOpenButton);
+        menuOpenButton.textContent = 'Меню';
+        menuOpenButton.title = 'Открыть панель управления';
+        menuOpenButton.style.cssText += ';position:fixed;right:18px;bottom:18px;z-index:999999;padding:8px 12px;background:rgba(16,16,18,.96);box-shadow:0 3px 12px #0007';
+        menuOpenButton.addEventListener('click', () => setMenuHidden(false));
+        document.body.append(menuOpenButton);
+        function row(label,name,handler) {
+            const element = document.createElement('div');
+            element.style.cssText = 'display:flex;align-items:center;gap:8px;margin:6px 0';
+            const text = document.createElement('span'); text.textContent = label; text.style.flex = '1';
+            const badge = document.createElement('span'); badge.style.cssText = 'color:#d9a6ff;font-size:10px'; hotkeyBadges.set(name,badge);
+            const button = document.createElement('button'); styleFeatureButton(button); button.addEventListener('click',handler);
+            element.append(text,badge,button); featureUi.append(element); return button;
         }
-
-        chainUiBtn = document.createElement('button');
-        kStickUiBtn = document.createElement('button');
-        skinUiBtn = document.createElement('button');
-        teleportUiBtn = document.createElement('button');
-
-        featureUi.append(
-            header,
-            makeRow('Авто-цепь', 'О', chainUiBtn, toggleAutoChain),
-            makeRow('Бита', 'Д', kStickUiBtn, toggleKStick),
-            makeRow('Смена скинов', 'Р', skinUiBtn, toggleSkinCycler),
-            makeRow('Телепорт', 'Я', teleportUiBtn, triggerTeleport)
-        );
-
-        document.body.appendChild(featureUi);
-        updateFeatureUi();
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', createFeatureUi, { once: true });
-    } else {
-        createFeatureUi();
-    }
-
-    // Use KeyboardEvent.code so shortcuts work in both EN and RU layouts:
-    // KeyJ = J / О, KeyL = L / Д, KeyH = H / Р.
-    document.addEventListener('keydown', event => {
-        if (isTypingTarget(event.target)) return;
-        if (event.ctrlKey || event.altKey || event.metaKey) return;
-        if (event.repeat) return;
-
-        if (event.code === 'KeyJ') {
-            event.preventDefault();
-            toggleAutoChain();
-        } else if (event.code === 'KeyL') {
-            event.preventDefault();
-            toggleKStick();
-        } else if (event.code === 'KeyH') {
-            event.preventDefault();
-            toggleSkinCycler();
+        chainUiBtn = row('Автоцепь','chainHotkey',toggleAutoChain);
+        kStickUiBtn = row('Удержание клавиши','stickHotkey',toggleKStick);
+        teleportUiBtn = row('Телепорт','teleportHotkey',triggerTeleport);
+        teleportUiBtn.title = 'ВКЛ — заморозить исходящие пакеты; ВЫКЛ — отправить очередь.';
+        queueFeatureLabel = document.createElement('div'); queueFeatureLabel.style.cssText='font-size:10px;color:#aaa'; featureUi.append(queueFeatureLabel);
+        const flush = document.createElement('button'); styleFeatureButton(flush); flush.textContent='Отправить очередь'; flush.addEventListener('click',flushWsQueue); featureUi.append(flush);
+        const details = document.createElement('details'); details.style.marginTop='10px';
+        const summary = document.createElement('summary'); summary.textContent='Настройки клавиш'; summary.style.cssText='cursor:pointer;color:#d9a6ff'; details.append(summary);
+        const help = document.createElement('p'); help.textContent='Нажмите кнопку, затем нужную клавишу. EN и RU работают по одной физической клавише. Esc — отмена. Удержание блокирует отпускание выбранной клавиши после её нажатия.'; help.style.cssText='color:#aaa;font-size:10px'; details.append(help);
+        const names = {actionKey:'Клавиша автоцепи и удержания',chainHotkey:'Вкл/выкл автоцепь',stickHotkey:'Вкл/выкл удержание',teleportHotkey:'Вкл/выкл телепорт'};
+        for (const [name,label] of Object.entries(names)) {
+            const line = document.createElement('div'); line.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;margin:7px 0';
+            const text = document.createElement('span'); text.textContent=label;
+            const button = document.createElement('button'); styleFeatureButton(button); button.addEventListener('click',()=>{captureName=name;releasePulse();settingsNotice.textContent='Нажмите нужную клавишу (Esc — отмена).';updateFeatureUi();}); bindingButtons.set(name,button); line.append(text,button); details.append(line);
         }
-    }, true);
-
-    window.toggleAutoChain = toggleAutoChain;
-    window.toggleKStick = toggleKStick;
-    window.toggleSkinCycler = toggleSkinCycler;
+        settingsNotice = document.createElement('div'); settingsNotice.textContent='Настройки сохраняются автоматически.'; settingsNotice.style.cssText='font-size:10px;color:#aaa;margin:8px 0'; details.append(settingsNotice);
+        const reset = document.createElement('button'); styleFeatureButton(reset); reset.textContent='Сбросить клавиши'; reset.addEventListener('click',()=>{releasePulse();if(kStuck){kStuck=false;sendKey('keyup',bindings.actionKey);}bindings={...defaults};captureName=null;saveBindings();updateFeatureUi();}); details.append(reset);
+        featureUi.append(details); document.body.append(featureUi); updateFeatureUi(); setMenuHidden(menuHidden);
+    }
+    window.addEventListener('keydown',event=>{
+        if (syntheticKeys.has(event)) return;
+        const code = eventCode(event);
+        if (captureName) {
+            event.preventDefault();event.stopImmediatePropagation();
+            if(code) capturedCodes.add(code);
+            if(event.repeat)return;
+            if(code==='Escape'){captureName=null;settingsNotice.textContent='Изменение отменено.';updateFeatureUi();return;}
+            if(!code || event.ctrlKey || event.altKey || event.metaKey){settingsNotice.textContent='Выберите одну клавишу без Ctrl, Alt или Win.';return;}
+            const name=captureName;
+            const conflict=Object.keys(bindings).find(other=>other!==name && ((name.endsWith('Hotkey') && other.endsWith('Hotkey') && bindings[other]===code) || (name.endsWith('Hotkey') && other === 'actionKey' && bindings[other]===code) || (name === 'actionKey' && other.endsWith('Hotkey') && bindings[other]===code)));
+            if(conflict){settingsNotice.textContent='Клавиша уже используется. Выберите другую.';return;}
+            releasePulse();
+            if(name==='actionKey' && kStuck){kStuck=false;sendKey('keyup',bindings.actionKey);}
+            bindings[name]=code;captureName=null;saveBindings();updateFeatureUi();return;
+        }
+        if(isTypingTarget(event.target) || event.ctrlKey || event.altKey || event.metaKey || event.isComposing)return;
+        const handlers={chainHotkey:toggleAutoChain,stickHotkey:toggleKStick,teleportHotkey:triggerTeleport};
+        for(const [name,handler] of Object.entries(handlers)) if(code===bindings[name]){event.preventDefault();event.stopImmediatePropagation();if(!event.repeat)handler();return;}
+    },true);
+    window.addEventListener('keyup',event=>{
+        if(syntheticKeys.has(event))return;
+        const code=eventCode(event);
+        if(capturedCodes.delete(code) || captureName){event.preventDefault();event.stopImmediatePropagation();return;}
+        if(isTypingTarget(event.target))return;
+        if(kStuck && code===bindings.actionKey){event.preventDefault();event.stopImmediatePropagation();return;}
+        if(Object.keys(bindings).some(name=>name.endsWith('Hotkey') && bindings[name]===code)){event.preventDefault();event.stopImmediatePropagation();}
+    },true);
+    window.addEventListener('blur',releasePulse);
+    window.toggleAutoChain=toggleAutoChain;
+    window.toggleKStick=toggleKStick;
 
     // ============================================================
     // 5) OPTIONAL WEBSOCKET FREEZE
@@ -1119,105 +962,21 @@
     }
 
     function updateWsUi() {
+        updateFeatureUi();
         if (!wsUi) return;
 
-        wsQueueLabel.textContent = 'Очередь: ' + wsQueue.length + ' пак.';
+        wsQueueLabel.textContent = 'Пакетов в очереди: ' + wsQueue.length;
         wsFreezeBtn.textContent = wsFrozen ? 'ВКЛ' : 'ВЫКЛ';
         wsFreezeBtn.style.background = wsFrozen ? '#ffffff' : '#222';
         wsFreezeBtn.style.color = wsFrozen ? '#000000' : '#ffffff';
         wsFreezeBtn.style.borderColor = wsFrozen ? '#ffffff' : '#555';
     }
 
-    function createWsUi() {
-        if (!CONFIG.wsUi || wsUi || !document.body) return;
-
-        wsUi = document.createElement('div');
-        wsUi.id = '__gobUnifiedWsUi';
-        wsUi.style.cssText = [
-            "position:fixed",
-            "right:20px",
-            "bottom:20px",
-            "z-index:999999",
-            "min-width:220px",
-            "padding:12px 14px",
-            "display:flex",
-            "flex-direction:column",
-            "gap:9px",
-            "border:1px solid #555",
-            "border-radius:9px",
-            "background:rgba(18,18,18,.94)",
-            "color:#fff",
-            "font:12px/1.3 monospace",
-            "box-shadow:0 4px 18px rgba(0,0,0,.55)",
-            "user-select:none",
-        ].join(';');
-
-        const title = document.createElement('div');
-        title.textContent = 'ИСХОДЯЩИЙ WS';
-        title.style.cssText = 'font-size:10px;letter-spacing:.12em;color:#aaa';
-
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px';
-
-        const label = document.createElement('span');
-        label.textContent = 'Заморозка [Я]';
-
-        wsFreezeBtn = document.createElement('button');
-        wsFreezeBtn.type = 'button';
-        wsFreezeBtn.style.cssText = [
-            "min-width:54px",
-            "padding:4px 10px",
-            "border:1px solid #555",
-            "border-radius:5px",
-            "background:#222",
-            "color:#fff",
-            "font:12px monospace",
-            "cursor:pointer",
-        ].join(';');
-        wsFreezeBtn.addEventListener('click', toggleWsFreeze);
-
-        row.append(label, wsFreezeBtn);
-
-        wsQueueLabel = document.createElement('div');
-        wsQueueLabel.style.color = '#aaa';
-
-        const flushButton = document.createElement('button');
-        flushButton.type = 'button';
-        flushButton.textContent = 'Отправить очередь';
-        flushButton.style.cssText = [
-            "padding:5px",
-            "border:1px solid #555",
-            "border-radius:5px",
-            "background:#222",
-            "color:#fff",
-            "font:11px monospace",
-            "cursor:pointer",
-        ].join(';');
-        flushButton.addEventListener('click', flushWsQueue);
-
-        wsUi.append(title, row, wsQueueLabel, flushButton);
-        document.body.appendChild(wsUi);
-        updateWsUi();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', createFeatureUi, { once: true });
+    } else {
+        createFeatureUi();
     }
-
-    if (CONFIG.wsUi) {
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', createWsUi, { once: true });
-        } else {
-            createWsUi();
-        }
-    }
-
-    // Physical Z key works as Z on EN layout and Я on RU layout.
-    document.addEventListener('keyup', event => {
-        if (isTypingTarget(event.target)) return;
-        if (event.ctrlKey || event.altKey || event.metaKey) return;
-
-        if (event.code === 'KeyZ') {
-            event.preventDefault();
-            toggleWsFreeze();
-        }
-    }, true);
 
     window.toggleWsFreeze = toggleWsFreeze;
     window.flushWsQueue = flushWsQueue;
@@ -1228,12 +987,8 @@
     window.getUnifiedModStatus = () => ({
         autoChain: autoChainActive,
         kStick: kStuck,
-        skinCycler: skinCyclerActive,
         worldGrid: showWorldGrid,
         bombBoxes: showBombBoxes,
-        trackedBombs: Object.keys(bombPositions).length,
-        bombCanvasHooked: Boolean(layer1Ctx),
-        timerSurfaceReady: Boolean(timerCtx),
         wsFrozen,
         wsQueuedPackets: wsQueue.length,
         tilesetCached: Boolean(tilesetBlobUrl)
@@ -1241,18 +996,12 @@
 
     window.addEventListener('beforeunload', () => {
         stopAutoChain();
-        stopSkinCycler();
-
-        if (preventKKeyUp) {
-            document.removeEventListener('keyup', preventKKeyUp, true);
-            preventKKeyUp = null;
-        }
 
         // Do not intentionally flush on unload. Let the socket/page close normally.
         wsQueue.length = 0;
     });
 
     log('Загружено.');
-    log('О (KeyJ) = Авто-цепь | Д (KeyL) = K-Stick | Р (KeyH) = Смена скинов | Я (KeyZ) = WS Freeze');
-    log('Консоль: toggleWorldGrid(), toggleBombBoxes(), getUnifiedModStatus()');
+    log('Клавиши настраиваются в панели. По умолчанию: J/О — автоцепь, L/Д — удержание, Z/Я — телепорт (заморозка сети).');
+    log('Console: toggleWorldGrid(), toggleBombBoxes(), getUnifiedModStatus()');
 })();
