@@ -1,0 +1,2171 @@
+// ==UserScript==
+// @name         AscendedBot 1-100 Registrar + Global Angular Logout
+// @namespace    bomberman-bot
+// @version      1.7.0
+// @description  Registers AscendedBot1-100, survives page navigation, reliably invokes Angular Register/Logout, and continues after errors.
+// @match        http://gameofbombs.com/*
+// @match        https://gameofbombs.com/*
+// @run-at       document-start
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        unsafeWindow
+// ==/UserScript==
+
+(() => {
+    'use strict';
+
+    const SETTINGS = {
+        startIndex: 1,
+        endIndex: 100,
+        usernamePrefix: 'AscendedBot',
+        password: '123123',
+
+        // Keep this configurable in the panel.
+        emailDomain: 'example.com',
+
+        landingPath: '/landing',
+
+        // The Angular form has ng-debounce values of 500-600 ms.
+        afterFillMs: 1100,
+        clickReactionMs: 850,
+        resultTimeoutMs: 15000,
+        logoutTimeoutMs: 15000,
+        betweenAccountsMs: 1000
+    };
+
+    const KEY = {
+        running: 'ascRegistrar.running',
+        nextIndex: 'ascRegistrar.nextIndex',
+        results: 'ascRegistrar.results',
+        emailDomain: 'ascRegistrar.emailDomain',
+        phase: 'ascRegistrar.phase',
+        pending: 'ascRegistrar.pending'
+    };
+
+    const PHASE = {
+        REGISTER: 'register',
+        WAIT_LOGIN: 'wait-login',
+        LOGOUT: 'logout',
+        WAIT_LANDING: 'wait-landing'
+    };
+
+    const pageWindow =
+        typeof unsafeWindow !== 'undefined'
+            ? unsafeWindow
+            : window;
+
+    // ============================================================
+    // NATIVE DIALOG INTERCEPTION
+    // ============================================================
+    //
+    // Game registration can show a blocking browser alert such as:
+    // "Can't send an e-mail to the specified address"
+    //
+    // A native alert pauses all JavaScript, so the registrar cannot continue
+    // until somebody presses OK. Replace it with a non-blocking log.
+    //
+    // Confirm dialogs are automatically accepted so a following Yes/OK prompt
+    // does not stop the batch.
+    //
+    // Keep references for console debugging.
+    const ORIGINAL_ALERT = pageWindow.alert.bind(pageWindow);
+    const ORIGINAL_CONFIRM = pageWindow.confirm.bind(pageWindow);
+
+    pageWindow.alert = function(message) {
+        const text = String(message ?? '');
+        console.log('[AscRegistrar] Auto-dismissed alert:', text);
+
+        try {
+            if (typeof log === 'function') {
+                log(`Auto-dismissed popup: ${text}`);
+            }
+        } catch {}
+
+        return undefined;
+    };
+
+    pageWindow.confirm = function(message) {
+        const text = String(message ?? '');
+        console.log('[AscRegistrar] Auto-accepted confirm:', text);
+
+        try {
+            if (typeof log === 'function') {
+                log(`Auto-accepted confirmation: ${text}`);
+            }
+        } catch {}
+
+        return true;
+    };
+
+    let stoppedLocally = false;
+    let loopActive = false;
+
+    let panel = null;
+    let statusEl = null;
+    let logEl = null;
+    let startBtn = null;
+    let stopBtn = null;
+    let domainInput = null;
+
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    // ============================================================
+    // STORAGE
+    // ============================================================
+
+    function getResults() {
+        const value = GM_getValue(KEY.results, []);
+        return Array.isArray(value) ? value : [];
+    }
+
+    function setResults(value) {
+        GM_setValue(KEY.results, value);
+    }
+
+    function isRunning() {
+        return !!GM_getValue(KEY.running, false);
+    }
+
+    function setRunning(value) {
+        GM_setValue(KEY.running, !!value);
+    }
+
+    function getNextIndex() {
+        return Number(GM_getValue(KEY.nextIndex, SETTINGS.startIndex)) || SETTINGS.startIndex;
+    }
+
+    function setNextIndex(value) {
+        GM_setValue(KEY.nextIndex, Number(value));
+    }
+
+    function getPhase() {
+        return GM_getValue(KEY.phase, PHASE.REGISTER) || PHASE.REGISTER;
+    }
+
+    function setPhase(value) {
+        GM_setValue(KEY.phase, value);
+    }
+
+    function getPending() {
+        const value = GM_getValue(KEY.pending, null);
+        return value && typeof value === 'object' ? value : null;
+    }
+
+    function setPending(value) {
+        GM_setValue(KEY.pending, value);
+    }
+
+    function clearPending() {
+        GM_setValue(KEY.pending, null);
+    }
+
+    function getEmailDomain() {
+        return String(
+            GM_getValue(KEY.emailDomain, SETTINGS.emailDomain) || SETTINGS.emailDomain
+        ).trim().toLowerCase();
+    }
+
+    function setEmailDomain(value) {
+        GM_setValue(KEY.emailDomain, String(value).trim().toLowerCase());
+    }
+
+    // ============================================================
+    // SMALL UI
+    // ============================================================
+
+    function addStyles() {
+        const style = document.createElement('style');
+
+        style.textContent = `
+            #asc-bot-registrar {
+                position: fixed;
+                right: 16px;
+                bottom: 16px;
+                z-index: 2147483647;
+                width: 370px;
+                padding: 12px;
+                color: #fff;
+                background: rgba(18,18,18,.97);
+                border: 1px solid #555;
+                border-radius: 9px;
+                box-shadow: 0 4px 18px rgba(0,0,0,.45);
+                font: 13px/1.35 Arial,sans-serif;
+            }
+            #asc-bot-registrar * { box-sizing: border-box; }
+            #asc-bot-registrar .title { font-weight: 700; margin-bottom: 8px; }
+            #asc-bot-registrar .row {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                margin-top: 7px;
+            }
+            #asc-bot-registrar input {
+                flex: 1;
+                min-width: 0;
+                padding: 7px 8px;
+                color: #fff;
+                background: #252525;
+                border: 1px solid #555;
+                border-radius: 5px;
+            }
+            #asc-bot-registrar button {
+                padding: 7px 10px;
+                color: #fff;
+                background: #303030;
+                border: 1px solid #666;
+                border-radius: 5px;
+                cursor: pointer;
+            }
+            #asc-bot-registrar button:disabled {
+                opacity: .45;
+                cursor: default;
+            }
+            #asc-bot-registrar .status {
+                margin-top: 8px;
+                padding: 7px;
+                background: #202020;
+                border-radius: 5px;
+                white-space: pre-wrap;
+            }
+            #asc-bot-registrar .log {
+                margin-top: 7px;
+                max-height: 170px;
+                overflow: auto;
+                padding: 7px;
+                background: #111;
+                border-radius: 5px;
+                white-space: pre-wrap;
+                font: 11px/1.35 Consolas,monospace;
+            }
+            #asc-bot-registrar .small {
+                margin-top: 6px;
+                color: #bbb;
+                font-size: 11px;
+            }
+        `;
+
+        document.documentElement.appendChild(style);
+    }
+
+    function createPanel() {
+        if (document.getElementById('asc-bot-registrar')) {
+            return;
+        }
+
+        addStyles();
+
+        panel = document.createElement('div');
+        panel.id = 'asc-bot-registrar';
+
+        panel.innerHTML = `
+            <div class="title">AscendedBot Registrar v1.7</div>
+
+            <div class="row">
+                <span>Email domain</span>
+                <input id="asc-domain" spellcheck="false">
+            </div>
+
+            <div class="row">
+                <button id="asc-start">Start 1-100</button>
+                <button id="asc-stop">Stop</button>
+                <button id="asc-reset">Reset</button>
+                <button id="asc-export">CSV</button>
+            </div>
+
+            <div id="asc-status" class="status"></div>
+            <div id="asc-log" class="log"></div>
+
+            <div class="small">
+                Register: direct Angular register(form), click fallback<br>
+                Logout: global Angular askLogout() search; menu link not required
+            </div>
+        `;
+
+        document.body.appendChild(panel);
+
+        statusEl = panel.querySelector('#asc-status');
+        logEl = panel.querySelector('#asc-log');
+        startBtn = panel.querySelector('#asc-start');
+        stopBtn = panel.querySelector('#asc-stop');
+        domainInput = panel.querySelector('#asc-domain');
+
+        domainInput.value = getEmailDomain();
+
+        startBtn.addEventListener('click', () => {
+            const domain = domainInput.value.trim().toLowerCase();
+
+            if (!/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i.test(domain)) {
+                alert('Enter a normal domain such as example.com');
+                return;
+            }
+
+            setEmailDomain(domain);
+
+            const next = getNextIndex();
+            if (next < SETTINGS.startIndex || next > SETTINGS.endIndex) {
+                setNextIndex(SETTINGS.startIndex);
+            }
+
+            stoppedLocally = false;
+            setRunning(true);
+
+            if (!getPending()) {
+                setPhase(PHASE.REGISTER);
+            }
+
+            updatePanel();
+            scheduleMainLoop(50);
+        });
+
+        stopBtn.addEventListener('click', () => {
+            stoppedLocally = true;
+            setRunning(false);
+            log('Stopped.');
+            updatePanel();
+        });
+
+        panel.querySelector('#asc-reset').addEventListener('click', () => {
+            stoppedLocally = true;
+            setRunning(false);
+            setNextIndex(SETTINGS.startIndex);
+            setPhase(PHASE.REGISTER);
+            clearPending();
+            setResults([]);
+            logEl.textContent = '';
+            log('Reset to AscendedBot1.');
+            updatePanel();
+        });
+
+        panel.querySelector('#asc-export').addEventListener('click', exportCSV);
+
+        updatePanel();
+
+        for (const row of getResults().slice(-8)) {
+            log(`${row.username}: ${row.status} - ${row.detail}`);
+        }
+    }
+
+    function updatePanel(extra = '') {
+        if (!statusEl) return;
+
+        const next = getNextIndex();
+        const rows = getResults();
+
+        const created = rows.filter(row => row.status === 'created').length;
+        const failed = rows.filter(row => row.status === 'failed').length;
+
+        statusEl.textContent =
+            `Running: ${isRunning() ? 'YES' : 'NO'}\n` +
+            `Phase: ${getPhase()}\n` +
+            `Next: ${
+                next > SETTINGS.endIndex
+                    ? 'DONE'
+                    : SETTINGS.usernamePrefix + next
+            }\n` +
+            `Created: ${created}   Failed: ${failed}` +
+            (extra ? `\n${extra}` : '');
+
+        startBtn.disabled = isRunning();
+        stopBtn.disabled = !isRunning();
+    }
+
+    function log(message) {
+        console.log('[AscRegistrar]', message);
+
+        if (!logEl) return;
+
+        const line = `[${new Date().toLocaleTimeString()}] ${message}`;
+
+        logEl.textContent +=
+            (logEl.textContent ? '\n' : '') +
+            line;
+
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // ============================================================
+    // DOM HELPERS
+    // ============================================================
+
+    function visible(el) {
+        if (!el) return false;
+
+        const style = getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+
+        return (
+            style.display !== 'none' &&
+            style.visibility !== 'hidden' &&
+            rect.width > 0 &&
+            rect.height > 0
+        );
+    }
+
+    function getRegisterFormElement() {
+        return document.querySelector('form.register');
+    }
+
+    function getVisibleInput(name) {
+        return [
+            ...document.querySelectorAll(
+                `form.register input[name="${name}"]`
+            )
+        ].find(visible) || null;
+    }
+
+    function getRegisterButton() {
+        return [
+            ...document.querySelectorAll(
+                'form.register button.reg'
+            )
+        ].find(visible) || null;
+    }
+
+    // Do NOT require visibility for logout.
+    // ng-show may temporarily leave the element display:none while Angular is
+    // changing views, but its ng-click handler is still attached.
+    function getLogoutButton() {
+        return document.querySelector(
+            'a[ng-click="askLogout()"]'
+        );
+    }
+
+    function getVisibleLogoutButton() {
+        return [
+            ...document.querySelectorAll(
+                'a[ng-click="askLogout()"]'
+            )
+        ].find(visible) || null;
+    }
+
+    function nativeSetValue(input, value) {
+        if (!input) return;
+
+        input.focus();
+
+        const descriptor =
+            Object.getOwnPropertyDescriptor(
+                HTMLInputElement.prototype,
+                'value'
+            );
+
+        if (descriptor?.set) {
+            descriptor.set.call(input, value);
+        } else {
+            input.value = value;
+        }
+
+        // Angular 1.x sees these.
+        for (const type of ['input', 'change', 'keyup']) {
+            input.dispatchEvent(
+                new Event(type, {
+                    bubbles: true
+                })
+            );
+        }
+
+        input.blur();
+    }
+
+    function fireRealClick(el) {
+        if (!el) return false;
+
+        try {
+            el.scrollIntoView({
+                block: 'center',
+                inline: 'center'
+            });
+        } catch {}
+
+        try {
+            el.focus();
+        } catch {}
+
+        // Use the browser's native click implementation first.
+        try {
+            HTMLElement.prototype.click.call(el);
+            return true;
+        } catch (error) {
+            console.warn('[AscRegistrar] native click failed', error);
+        }
+
+        // Fallback mouse sequence.
+        try {
+            for (const type of [
+                'mousedown',
+                'mouseup',
+                'click'
+            ]) {
+                el.dispatchEvent(
+                    new MouseEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        button: 0,
+                        buttons: type === 'mousedown' ? 1 : 0
+                    })
+                );
+            }
+
+            return true;
+        } catch (error) {
+            console.warn('[AscRegistrar] mouse fallback failed', error);
+        }
+
+        return false;
+    }
+
+    // ============================================================
+    // ANGULAR FALLBACK
+    // ============================================================
+
+    function angularApi() {
+        return pageWindow.angular || window.angular || null;
+    }
+
+    function angularScopeFor(el) {
+        const ng = angularApi();
+
+        if (!ng || !el) {
+            return null;
+        }
+
+        try {
+            const wrapped = ng.element(el);
+
+            return (
+                wrapped.scope?.() ||
+                wrapped.isolateScope?.() ||
+                null
+            );
+        } catch {
+            return null;
+        }
+    }
+
+    function findScopeWithFunction(startScope, name) {
+        let scope = startScope;
+
+        for (let i = 0; scope && i < 12; i++) {
+            if (typeof scope[name] === 'function') {
+                return scope;
+            }
+
+            scope = scope.$parent;
+        }
+
+        return null;
+    }
+
+    function getAngularRootScope() {
+        const ng = angularApi();
+
+        if (!ng) {
+            return null;
+        }
+
+        const candidates = [
+            document.querySelector('[ng-app]'),
+            document.body,
+            document.documentElement
+        ].filter(Boolean);
+
+        for (const el of candidates) {
+            try {
+                const wrapped = ng.element(el);
+
+                // Best route: Angular injector -> $rootScope.
+                const injector =
+                    wrapped.injector?.();
+
+                if (injector) {
+                    const root =
+                        injector.get('$rootScope');
+
+                    if (root) {
+                        return root;
+                    }
+                }
+
+                // Fallback through any scope attached to the element.
+                const scope =
+                    wrapped.scope?.() ||
+                    wrapped.isolateScope?.();
+
+                if (scope?.$root) {
+                    return scope.$root;
+                }
+            } catch {}
+        }
+
+        return null;
+    }
+
+    function findFunctionInScopeTree(name) {
+        const root =
+            getAngularRootScope();
+
+        if (!root) {
+            return {
+                scope: null,
+                scanned: 0
+            };
+        }
+
+        const stack = [root];
+        const seen = new Set();
+
+        let scanned = 0;
+
+        while (
+            stack.length &&
+            scanned < 10000
+        ) {
+            const scope =
+                stack.pop();
+
+            if (
+                !scope ||
+                seen.has(scope.$id)
+            ) {
+                continue;
+            }
+
+            seen.add(scope.$id);
+            scanned++;
+
+            if (
+                typeof scope[name] ===
+                'function'
+            ) {
+                return {
+                    scope,
+                    scanned
+                };
+            }
+
+            // Angular 1.x scope tree.
+            let child =
+                scope.$$childHead;
+
+            while (child) {
+                stack.push(child);
+                child =
+                    child.$$nextSibling;
+            }
+        }
+
+        return {
+            scope: null,
+            scanned
+        };
+    }
+
+    function invokeAngularFunctionAnywhere(name, ...args) {
+        const found =
+            findFunctionInScopeTree(
+                name
+            );
+
+        if (!found.scope) {
+            log(
+                `Angular ${name}() not found globally (scanned ${found.scanned} scopes).`
+            );
+
+            return false;
+        }
+
+        log(
+            `Found Angular ${name}() globally after scanning ${found.scanned} scopes.`
+        );
+
+        return applyAngular(
+            found.scope,
+            () =>
+                found.scope[name](
+                    ...args
+                )
+        );
+    }
+
+    function findScopeValue(startScope, name) {
+        let scope = startScope;
+
+        for (let i = 0; scope && i < 12; i++) {
+            if (scope[name] !== undefined) {
+                return scope[name];
+            }
+
+            scope = scope.$parent;
+        }
+
+        return undefined;
+    }
+
+    function applyAngular(scope, fn) {
+        if (!scope || typeof fn !== 'function') {
+            return false;
+        }
+
+        try {
+            if (scope.$root?.$$phase) {
+                fn();
+            } else if (typeof scope.$apply === 'function') {
+                scope.$apply(fn);
+            } else {
+                fn();
+            }
+
+            return true;
+        } catch (error) {
+            console.warn('[AscRegistrar] Angular apply failed', error);
+            return false;
+        }
+    }
+
+    function angularEvalElementExpression(el) {
+        if (!el) {
+            return false;
+        }
+
+        const expression =
+            el.getAttribute('ng-click') ||
+            el.getAttribute('data-ng-click');
+
+        if (!expression) {
+            return false;
+        }
+
+        let scope =
+            angularScopeFor(el);
+
+        if (!scope) {
+            return false;
+        }
+
+        try {
+            if (scope.$root?.$$phase) {
+                scope.$eval(expression);
+            } else {
+                scope.$apply(
+                    () => scope.$eval(expression)
+                );
+            }
+
+            log(`Executed Angular expression: ${expression}`);
+            return true;
+        } catch (error) {
+            console.warn(
+                '[AscRegistrar] Angular expression failed:',
+                expression,
+                error
+            );
+
+            return false;
+        }
+    }
+
+    function syncAngularRegistrationModel(username, email, password) {
+        const formEl =
+            getRegisterFormElement();
+
+        const button =
+            getRegisterButton();
+
+        let scope =
+            angularScopeFor(button) ||
+            angularScopeFor(formEl);
+
+        if (!scope) {
+            log('Angular scope for registration form was not found.');
+            return false;
+        }
+
+        // registerForm can live on the current scope or a parent scope.
+        let modelScope = scope;
+
+        for (let i = 0; modelScope && i < 15; i++) {
+            if (
+                modelScope.registerForm !== undefined ||
+                modelScope.form !== undefined
+            ) {
+                break;
+            }
+
+            modelScope =
+                modelScope.$parent;
+        }
+
+        if (!modelScope) {
+            log('Angular registration model scope was not found.');
+            return false;
+        }
+
+        try {
+            const update = () => {
+                if (!modelScope.registerForm) {
+                    modelScope.registerForm = {};
+                }
+
+                modelScope.registerForm.username = username;
+                modelScope.registerForm.email = email;
+                modelScope.registerForm.pwd = password;
+
+                const formController =
+                    modelScope.form;
+
+                if (formController) {
+                    for (const fieldName of [
+                        'username',
+                        'email',
+                        'pwd'
+                    ]) {
+                        const control =
+                            formController[fieldName];
+
+                        if (!control) {
+                            continue;
+                        }
+
+                        try {
+                            control.$setViewValue(
+                                fieldName === 'username'
+                                    ? username
+                                    : fieldName === 'email'
+                                        ? email
+                                        : password
+                            );
+                        } catch {}
+
+                        try {
+                            control.$setTouched();
+                        } catch {}
+
+                        try {
+                            control.$setDirty();
+                        } catch {}
+
+                        try {
+                            control.$validate();
+                        } catch {}
+                    }
+
+                    try {
+                        formController.$setDirty();
+                    } catch {}
+                }
+            };
+
+            if (modelScope.$root?.$$phase) {
+                update();
+            } else if (typeof modelScope.$apply === 'function') {
+                modelScope.$apply(update);
+            } else {
+                update();
+            }
+
+            log('Angular registerForm model synchronized.');
+            return true;
+        } catch (error) {
+            console.warn(
+                '[AscRegistrar] Failed to synchronize Angular model:',
+                error
+            );
+
+            return false;
+        }
+    }
+
+    function angularRegisterFallback(button) {
+        // First execute the exact expression Angular attached to this button:
+        // ng-click="register(form)"
+        if (angularEvalElementExpression(button)) {
+            return true;
+        }
+
+        const start =
+            angularScopeFor(button) ||
+            angularScopeFor(getRegisterFormElement());
+
+        const scope =
+            findScopeWithFunction(start, 'register');
+
+        if (!scope) {
+            log('Angular register() function was not found.');
+            return false;
+        }
+
+        const formController =
+            findScopeValue(scope, 'form');
+
+        log('Calling Angular register(form) directly.');
+
+        return applyAngular(
+            scope,
+            () => scope.register(formController)
+        );
+    }
+
+    function angularLogoutFallback(logoutButton) {
+        // If the menu item exists, execute its exact ng-click expression.
+        if (
+            logoutButton &&
+            angularEvalElementExpression(
+                logoutButton
+            )
+        ) {
+            return true;
+        }
+
+        // Try the nearest scope first.
+        const start =
+            angularScopeFor(logoutButton) ||
+            angularScopeFor(document.body);
+
+        const localScope =
+            findScopeWithFunction(
+                start,
+                'askLogout'
+            );
+
+        if (localScope) {
+            log('Calling Angular askLogout() from nearby scope.');
+
+            return applyAngular(
+                localScope,
+                () =>
+                    localScope.askLogout()
+            );
+        }
+
+        // Important v1.7 fallback:
+        // the Logout menu template may not exist in the DOM until the menu is
+        // opened, but its controller/scope can already be alive. Search every
+        // active Angular scope rather than waiting forever for the <a> element.
+        return invokeAngularFunctionAnywhere(
+            'askLogout'
+        );
+    }
+
+    // ============================================================
+    // FORM / ERROR HELPERS
+    // ============================================================
+
+    function simpleEmail() {
+        const number =
+            Math.floor(
+                10000 +
+                Math.random() * 90000
+            );
+
+        return `bot${number}@${getEmailDomain()}`;
+    }
+
+    function visibleErrorText() {
+        const form = getRegisterFormElement();
+
+        if (!form) {
+            return '';
+        }
+
+        return [
+            ...form.querySelectorAll(
+                '.tooltips.error'
+            )
+        ]
+            .filter(visible)
+            .map(el =>
+                (el.textContent || '')
+                    .trim()
+            )
+            .filter(Boolean)
+            .join(' | ');
+    }
+
+    // "Dismiss" means:
+    // - capture the error in the log/results,
+    // - remove focus so field tooltips close,
+    // - reset the visible fields for the next attempt.
+    // It does NOT bypass validation.
+    function dismissRegistrationErrors() {
+        try {
+            if (
+                document.activeElement &&
+                typeof document.activeElement.blur === 'function'
+            ) {
+                document.activeElement.blur();
+            }
+        } catch {}
+
+        const username = getVisibleInput('username');
+        const email = getVisibleInput('email');
+        const pwd = getVisibleInput('pwd');
+
+        if (username) nativeSetValue(username, '');
+        if (email) nativeSetValue(email, '');
+        if (pwd) nativeSetValue(pwd, '');
+
+        const form = getRegisterFormElement();
+        const scope = angularScopeFor(form);
+
+        if (scope) {
+            const errorScope = (() => {
+                let s = scope;
+                for (let i = 0; s && i < 12; i++) {
+                    if (s.registerErrors !== undefined) return s;
+                    s = s.$parent;
+                }
+                return null;
+            })();
+
+            if (errorScope) {
+                applyAngular(
+                    errorScope,
+                    () => {
+                        errorScope.registerErrors = {};
+                    }
+                );
+            }
+        }
+    }
+
+    async function waitForRegisterForm(timeoutMs = 15000) {
+        const end = Date.now() + timeoutMs;
+
+        while (Date.now() < end) {
+            const username = getVisibleInput('username');
+            const email = getVisibleInput('email');
+            const pwd = getVisibleInput('pwd');
+            const button = getRegisterButton();
+
+            if (username && email && pwd && button) {
+                return {
+                    username,
+                    email,
+                    pwd,
+                    button
+                };
+            }
+
+            await sleep(150);
+        }
+
+        return null;
+    }
+
+    function pageLooksLoggedIn() {
+        return !!getLogoutButton();
+    }
+
+    async function waitForRegisterReaction(originalUrl, oldButton) {
+        const end =
+            Date.now() +
+            SETTINGS.clickReactionMs;
+
+        while (Date.now() < end) {
+            if (location.href !== originalUrl) {
+                return 'navigation';
+            }
+
+            if (pageLooksLoggedIn()) {
+                return 'logged-in';
+            }
+
+            if (visibleErrorText()) {
+                return 'error';
+            }
+
+            if (oldButton && oldButton.disabled) {
+                return 'processing';
+            }
+
+            await sleep(80);
+        }
+
+        return 'none';
+    }
+
+    // ============================================================
+    // REGISTER CLICK
+    // ============================================================
+
+    async function pressRegister(button) {
+        const originalUrl = location.href;
+
+        // Direct Angular execution is primary. A Tampermonkey-generated
+        // MouseEvent is not a trusted human input and some Angular flows can
+        // visually react without actually submitting.
+        log('Submitting through Angular ng-click="register(form)".');
+
+        let angularCalled =
+            angularRegisterFallback(button);
+
+        let reaction = 'none';
+
+        if (angularCalled) {
+            reaction =
+                await waitForRegisterReaction(
+                    originalUrl,
+                    button
+                );
+
+            if (reaction !== 'none') {
+                log(`Angular Register reacted: ${reaction}`);
+                return true;
+            }
+        }
+
+        // DOM click is now only the fallback.
+        log('Angular submit had no visible reaction; trying native button click.');
+
+        fireRealClick(button);
+
+        reaction =
+            await waitForRegisterReaction(
+                originalUrl,
+                button
+            );
+
+        log(`Native Register reaction: ${reaction}`);
+
+        return reaction !== 'none';
+    }
+
+    // ============================================================
+    // RESULT RECORDING
+    // ============================================================
+
+    function resultAlreadyRecorded(index) {
+        return getResults().some(
+            row =>
+                Number(row.index) ===
+                Number(index)
+        );
+    }
+
+    function recordPending(status, detail) {
+        const pending = getPending();
+
+        if (!pending) {
+            return;
+        }
+
+        if (!resultAlreadyRecorded(pending.index)) {
+            const rows = getResults();
+
+            rows.push({
+                ...pending,
+                status,
+                detail
+            });
+
+            setResults(rows);
+        }
+
+        if (status === 'created') {
+            setNextIndex(
+                Number(pending.index) + 1
+            );
+        }
+
+        updatePanel();
+    }
+
+    // ============================================================
+    // LOGOUT
+    // ============================================================
+
+    function visibleConfirmationButton(exclude) {
+        const candidates = [
+            ...document.querySelectorAll(
+                'button, a'
+            )
+        ];
+
+        return candidates.find(el => {
+            if (
+                el === exclude ||
+                !visible(el)
+            ) {
+                return false;
+            }
+
+            const text =
+                (el.textContent || '')
+                    .trim()
+                    .toLowerCase();
+
+            return (
+                text === 'logout' ||
+                text === 'yes' ||
+                text === 'confirm' ||
+                text === 'ok'
+            );
+        }) || null;
+    }
+
+    async function waitForLogoutReaction(oldUrl, logoutButton) {
+        const end =
+            Date.now() + 1200;
+
+        while (Date.now() < end) {
+            if (location.href !== oldUrl) {
+                return true;
+            }
+
+            if (
+                getVisibleInput('username') &&
+                getVisibleInput('email') &&
+                getVisibleInput('pwd')
+            ) {
+                return true;
+            }
+
+            const confirm =
+                visibleConfirmationButton(
+                    logoutButton
+                );
+
+            if (confirm) {
+                return true;
+            }
+
+            await sleep(100);
+        }
+
+        return false;
+    }
+
+    async function pressLogout() {
+        const end =
+            Date.now() +
+            SETTINGS.logoutTimeoutMs;
+
+        log('Starting Logout.');
+
+        let globalAttempts = 0;
+
+        while (Date.now() < end) {
+            if (
+                !isRunning() ||
+                stoppedLocally
+            ) {
+                return false;
+            }
+
+            const oldUrl =
+                location.href;
+
+            // The menu item may or may not be rendered. Do not block on it.
+            const logoutButton =
+                getVisibleLogoutButton() ||
+                getLogoutButton();
+
+            let invoked = false;
+
+            // 1) Direct Angular path first. This can work without the Logout
+            //    link being present because v1.7 searches the full scope tree.
+            invoked =
+                angularLogoutFallback(
+                    logoutButton
+                );
+
+            globalAttempts++;
+
+            if (invoked) {
+                log(
+                    `Logout Angular handler invoked (attempt ${globalAttempts}).`
+                );
+
+                await sleep(450);
+            } else if (logoutButton) {
+                // 2) If Angular lookup failed but the actual element exists,
+                //    try a native click.
+                log(
+                    'Angular logout handler unavailable; clicking Logout element.'
+                );
+
+                fireRealClick(
+                    logoutButton
+                );
+
+                await sleep(450);
+            }
+
+            // Native confirm() is already auto-accepted by v1.5+.
+            // Also handle an HTML confirmation modal if the site uses one.
+            const confirmEnd =
+                Date.now() +
+                3000;
+
+            while (Date.now() < confirmEnd) {
+                const confirm =
+                    visibleConfirmationButton(
+                        logoutButton
+                    );
+
+                if (confirm) {
+                    log(
+                        `Pressing logout confirmation: ${
+                            (confirm.textContent || '').trim()
+                        }`
+                    );
+
+                    fireRealClick(
+                        confirm
+                    );
+
+                    await sleep(500);
+                    break;
+                }
+
+                if (
+                    getVisibleInput('username') &&
+                    getVisibleInput('email') &&
+                    getVisibleInput('pwd')
+                ) {
+                    log('Logout complete; registration form is back.');
+
+                    setPhase(
+                        PHASE.REGISTER
+                    );
+
+                    clearPending();
+
+                    return true;
+                }
+
+                if (
+                    location.href !==
+                    oldUrl
+                ) {
+                    log(
+                        'Logout triggered navigation; letting the site redirect naturally.'
+                    );
+
+                    setPhase(
+                        PHASE.WAIT_LANDING
+                    );
+
+                    clearPending();
+
+                    return true;
+                }
+
+                await sleep(120);
+            }
+
+            // Check again after any modal interaction.
+            if (
+                getVisibleInput('username') &&
+                getVisibleInput('email') &&
+                getVisibleInput('pwd')
+            ) {
+                log('Logout complete; registration form is back.');
+
+                setPhase(
+                    PHASE.REGISTER
+                );
+
+                clearPending();
+
+                return true;
+            }
+
+            if (
+                location.href !==
+                oldUrl
+            ) {
+                log(
+                    'Logout triggered navigation; waiting for natural landing redirect.'
+                );
+
+                setPhase(
+                    PHASE.WAIT_LANDING
+                );
+
+                clearPending();
+
+                return true;
+            }
+
+            // Don't hammer Angular every frame.
+            await sleep(800);
+        }
+
+        log(
+            'Logout timed out: neither askLogout() nor a Logout element completed the action.'
+        );
+
+        return false;
+    }
+
+    // ============================================================
+    // REGISTER ONE
+    // ============================================================
+
+    async function beginRegistration(index) {
+        const form =
+            await waitForRegisterForm();
+
+        if (!form) {
+            throw new Error(
+                'Visible registration form was not found'
+            );
+        }
+
+        const username =
+            `${SETTINGS.usernamePrefix}${index}`;
+
+        const email =
+            simpleEmail();
+
+        const pending = {
+            index,
+            username,
+            email,
+            password: SETTINGS.password
+        };
+
+        log(
+            `Preparing ${username} | ${email}`
+        );
+
+        updatePanel(
+            `Filling ${username}`
+        );
+
+        nativeSetValue(
+            form.username,
+            username
+        );
+
+        await sleep(120);
+
+        nativeSetValue(
+            form.email,
+            email
+        );
+
+        await sleep(120);
+
+        nativeSetValue(
+            form.pwd,
+            SETTINGS.password
+        );
+
+        // Keep Angular's model and form controller in lock-step with the DOM.
+        // This avoids a button that visually clicks while register(form)
+        // immediately returns because Angular still considers a field invalid.
+        syncAngularRegistrationModel(
+            username,
+            email,
+            SETTINGS.password
+        );
+
+        // Let ng-debounce settle.
+        await sleep(
+            SETTINGS.afterFillMs
+        );
+
+        // Re-sync after debounce so any delayed ngModel update cannot restore
+        // stale values.
+        syncAngularRegistrationModel(
+            username,
+            email,
+            SETTINGS.password
+        );
+
+        await sleep(100);
+
+        const beforeError =
+            visibleErrorText();
+
+        if (beforeError) {
+            log(
+                `Validation error before submit: ${beforeError}`
+            );
+
+            recordStandaloneFailure(
+                pending,
+                beforeError
+            );
+
+            setNextIndex(
+                index + 1
+            );
+
+            dismissRegistrationErrors();
+
+            return false;
+        }
+
+        const button =
+            getRegisterButton();
+
+        if (!button) {
+            throw new Error(
+                'Register button was not found'
+            );
+        }
+
+        // Persist this BEFORE clicking. If the site navigates immediately,
+        // the next page can resume from this exact account.
+        setPending(pending);
+        setPhase(PHASE.WAIT_LOGIN);
+
+        updatePanel(
+            `Pressing Register for ${username}`
+        );
+
+        const pressed =
+            await pressRegister(
+                button
+            );
+
+        if (!pressed) {
+            log(
+                'Register did not react to DOM click or Angular fallback.'
+            );
+
+            recordPending(
+                'failed',
+                'Register did not react'
+            );
+
+            setNextIndex(
+                index + 1
+            );
+
+            setPhase(
+                PHASE.REGISTER
+            );
+
+            clearPending();
+
+            dismissRegistrationErrors();
+
+            return false;
+        }
+
+        // If the page does not navigate, wait here for either logout or error.
+        const end =
+            Date.now() +
+            SETTINGS.resultTimeoutMs;
+
+        while (Date.now() < end) {
+            if (!isRunning() || stoppedLocally) {
+                return false;
+            }
+
+            if (pageLooksLoggedIn()) {
+                log(
+                    `${username} logged in successfully.`
+                );
+
+                recordPending(
+                    'created',
+                    'logged in successfully'
+                );
+
+                setPhase(
+                    PHASE.LOGOUT
+                );
+
+                return true;
+            }
+
+            const error =
+                visibleErrorText();
+
+            if (error) {
+                log(
+                    `Registration error: ${error}`
+                );
+
+                recordPending(
+                    'failed',
+                    error
+                );
+
+                setNextIndex(
+                    index + 1
+                );
+
+                setPhase(
+                    PHASE.REGISTER
+                );
+
+                clearPending();
+
+                dismissRegistrationErrors();
+
+                return false;
+            }
+
+            await sleep(200);
+        }
+
+        // Do NOT mark it failed if navigation is in progress.
+        // A page reload will resume WAIT_LOGIN from Tampermonkey storage.
+        log(
+            'Waiting for login page transition...'
+        );
+
+        return true;
+    }
+
+    function recordStandaloneFailure(pending, detail) {
+        if (
+            resultAlreadyRecorded(
+                pending.index
+            )
+        ) {
+            return;
+        }
+
+        const rows = getResults();
+
+        rows.push({
+            ...pending,
+            status: 'failed',
+            detail
+        });
+
+        setResults(rows);
+    }
+
+    // ============================================================
+    // RESUME AFTER PAGE NAVIGATION
+    // ============================================================
+
+    async function resumeWaitingLogin() {
+        const pending =
+            getPending();
+
+        if (!pending) {
+            setPhase(
+                PHASE.REGISTER
+            );
+
+            return;
+        }
+
+        updatePanel(
+            `Waiting for ${pending.username} login`
+        );
+
+        // The fact that this userscript is running on a new game page and a
+        // Logout element exists is our success signal.
+        if (pageLooksLoggedIn()) {
+            log(
+                `${pending.username}: login detected after navigation.`
+            );
+
+            recordPending(
+                'created',
+                'logged in successfully'
+            );
+
+            setPhase(
+                PHASE.LOGOUT
+            );
+
+            return;
+        }
+
+        // If we landed back on the registration form, inspect the error.
+        if (
+            getRegisterFormElement()
+        ) {
+            const error =
+                visibleErrorText();
+
+            if (error) {
+                log(
+                    `${pending.username}: ${error}`
+                );
+
+                recordPending(
+                    'failed',
+                    error
+                );
+
+                setNextIndex(
+                    Number(pending.index) + 1
+                );
+
+                setPhase(
+                    PHASE.REGISTER
+                );
+
+                clearPending();
+
+                dismissRegistrationErrors();
+
+                return;
+            }
+        }
+
+        // Give Angular/game UI a little more time to finish rendering.
+        const end =
+            Date.now() +
+            SETTINGS.resultTimeoutMs;
+
+        while (Date.now() < end) {
+            if (pageLooksLoggedIn()) {
+                log(
+                    `${pending.username}: login detected.`
+                );
+
+                recordPending(
+                    'created',
+                    'logged in successfully'
+                );
+
+                setPhase(
+                    PHASE.LOGOUT
+                );
+
+                return;
+            }
+
+            const error =
+                visibleErrorText();
+
+            if (error) {
+                log(
+                    `${pending.username}: ${error}`
+                );
+
+                recordPending(
+                    'failed',
+                    error
+                );
+
+                setNextIndex(
+                    Number(pending.index) + 1
+                );
+
+                setPhase(
+                    PHASE.REGISTER
+                );
+
+                clearPending();
+
+                dismissRegistrationErrors();
+
+                return;
+            }
+
+            await sleep(250);
+        }
+
+        log(
+            `${pending.username}: login result timed out.`
+        );
+
+        recordPending(
+            'failed',
+            'login result timed out'
+        );
+
+        setNextIndex(
+            Number(pending.index) + 1
+        );
+
+        setPhase(
+            PHASE.REGISTER
+        );
+
+        clearPending();
+    }
+
+    // ============================================================
+    // WAIT FOR NATURAL POST-LOGOUT REDIRECT
+    // ============================================================
+
+    async function waitForLandingNaturally() {
+        updatePanel('Waiting for registration page after logout');
+
+        // We intentionally do not assign location.href or call reload() here.
+        // The website owns its own redirect after logout.
+        const end = Date.now() + 30000;
+
+        while (Date.now() < end) {
+            if (!isRunning() || stoppedLocally) {
+                return false;
+            }
+
+            const form =
+                getRegisterFormElement();
+
+            const username =
+                getVisibleInput('username');
+
+            const email =
+                getVisibleInput('email');
+
+            const pwd =
+                getVisibleInput('pwd');
+
+            const registerButton =
+                getRegisterButton();
+
+            if (
+                form &&
+                username &&
+                email &&
+                pwd &&
+                registerButton
+            ) {
+                log('Registration page is ready. Continuing without a forced refresh.');
+
+                setPhase(
+                    PHASE.REGISTER
+                );
+
+                return true;
+            }
+
+            await sleep(200);
+        }
+
+        // Stay in WAIT_LANDING rather than causing a navigation loop.
+        log('Still waiting for the site to return to the registration page.');
+
+        return false;
+    }
+
+
+    // ============================================================
+    // MAIN STATE MACHINE
+    // ============================================================
+
+    function scheduleMainLoop(delay = 250) {
+        setTimeout(
+            () => mainLoop(),
+            delay
+        );
+    }
+
+    async function mainLoop() {
+        if (loopActive) {
+            return;
+        }
+
+        if (
+            !isRunning() ||
+            stoppedLocally
+        ) {
+            updatePanel();
+            return;
+        }
+
+        loopActive = true;
+
+        try {
+            // Keep processing state transitions until a navigation occurs,
+            // the user stops, or we intentionally wait between accounts.
+            for (let guard = 0; guard < 20; guard++) {
+                if (
+                    !isRunning() ||
+                    stoppedLocally
+                ) {
+                    break;
+                }
+
+                const phase =
+                    getPhase();
+
+                updatePanel();
+
+                // -----------------------------------------------
+                // WAIT_LANDING
+                // -----------------------------------------------
+
+                if (
+                    phase ===
+                    PHASE.WAIT_LANDING
+                ) {
+                    const ready =
+                        await waitForLandingNaturally();
+
+                    if (ready) {
+                        await sleep(
+                            SETTINGS.betweenAccountsMs
+                        );
+
+                        continue;
+                    }
+
+                    break;
+                }
+
+                // -----------------------------------------------
+                // WAIT_LOGIN
+                // -----------------------------------------------
+
+                if (
+                    phase ===
+                    PHASE.WAIT_LOGIN
+                ) {
+                    await resumeWaitingLogin();
+
+                    continue;
+                }
+
+                // -----------------------------------------------
+                // LOGOUT
+                // -----------------------------------------------
+
+                if (
+                    phase ===
+                    PHASE.LOGOUT
+                ) {
+                    const pending =
+                        getPending();
+
+                    if (pending) {
+                        log(
+                            `Logging out ${pending.username}.`
+                        );
+                    }
+
+                    updatePanel(
+                        'Pressing Logout'
+                    );
+
+                    const loggedOut =
+                        await pressLogout();
+
+                    if (
+                        !isRunning() ||
+                        stoppedLocally
+                    ) {
+                        break;
+                    }
+
+                    // After logout, let the website complete its own redirect.
+                    // Do not force /landing and do not flip immediately to
+                    // REGISTER while a redirect may still be in progress.
+                    if (loggedOut) {
+                        if (
+                            getPhase() !==
+                            PHASE.WAIT_LANDING
+                        ) {
+                            setPhase(
+                                PHASE.WAIT_LANDING
+                            );
+                        }
+
+                        clearPending();
+
+                        continue;
+                    }
+
+                    break;
+                }
+
+                // -----------------------------------------------
+                // REGISTER
+                // -----------------------------------------------
+
+                const index =
+                    getNextIndex();
+
+                if (
+                    index >
+                    SETTINGS.endIndex
+                ) {
+                    setRunning(false);
+                    clearPending();
+                    setPhase(PHASE.REGISTER);
+
+                    log(
+                        'Finished AscendedBot1 through AscendedBot100.'
+                    );
+
+                    updatePanel(
+                        'Finished'
+                    );
+
+                    break;
+                }
+
+                if (
+                    !getRegisterFormElement()
+                ) {
+                    log(
+                        'Registration form is not ready yet. Waiting for the site without forcing navigation.'
+                    );
+
+                    setPhase(
+                        PHASE.WAIT_LANDING
+                    );
+
+                    continue;
+                }
+
+                const started =
+                    await beginRegistration(
+                        index
+                    );
+
+                // If beginRegistration reached logged-in state without a page
+                // reload, the next loop iteration will handle LOGOUT.
+                if (
+                    getPhase() ===
+                    PHASE.LOGOUT
+                ) {
+                    continue;
+                }
+
+                // Failed registration: advance and try the next one after a
+                // short wait.
+                if (
+                    getPhase() ===
+                    PHASE.REGISTER
+                ) {
+                    await sleep(
+                        SETTINGS.betweenAccountsMs
+                    );
+
+                    continue;
+                }
+
+                // WAIT_LOGIN means either the page is about to navigate or
+                // we are waiting for the login UI. Let this iteration end.
+                if (
+                    started
+                ) {
+                    break;
+                }
+            }
+        } catch (error) {
+            log(
+                `${error?.name || 'Error'}: ${
+                    error?.message || error
+                }`
+            );
+        } finally {
+            loopActive = false;
+            updatePanel();
+
+            if (
+                isRunning() &&
+                !stoppedLocally
+            ) {
+                scheduleMainLoop(700);
+            }
+        }
+    }
+
+    // ============================================================
+    // CSV EXPORT
+    // ============================================================
+
+    function csvEscape(value) {
+        const text =
+            String(
+                value ?? ''
+            );
+
+        return /[",\n]/.test(text)
+            ? `"${text.replace(/"/g, '""')}"`
+            : text;
+    }
+
+    function exportCSV() {
+        const rows =
+            getResults();
+
+        if (!rows.length) {
+            alert(
+                'No results yet.'
+            );
+
+            return;
+        }
+
+        const csv = [
+            'index,username,email,password,status,detail',
+            ...rows.map(row =>
+                [
+                    row.index,
+                    row.username,
+                    row.email,
+                    row.password,
+                    row.status,
+                    row.detail
+                ]
+                    .map(csvEscape)
+                    .join(',')
+            )
+        ].join('\n');
+
+        const blob =
+            new Blob(
+                [csv],
+                {
+                    type:
+                        'text/csv;charset=utf-8'
+                }
+            );
+
+        const url =
+            URL.createObjectURL(
+                blob
+            );
+
+        const anchor =
+            document.createElement(
+                'a'
+            );
+
+        anchor.href =
+            url;
+
+        anchor.download =
+            'AscendedBot_accounts.csv';
+
+        document.body.appendChild(
+            anchor
+        );
+
+        anchor.click();
+        anchor.remove();
+
+        setTimeout(
+            () =>
+                URL.revokeObjectURL(
+                    url
+                ),
+            3000
+        );
+    }
+
+    // ============================================================
+    // BOOT
+    // ============================================================
+
+    function boot() {
+        if (!document.body) {
+            setTimeout(
+                boot,
+                50
+            );
+
+            return;
+        }
+
+        createPanel();
+
+        if (isRunning()) {
+            stoppedLocally = false;
+            scheduleMainLoop(600);
+        }
+    }
+
+    boot();
+})();
