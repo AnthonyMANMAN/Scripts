@@ -171,7 +171,9 @@ function drawHeatmap() {
 function render() {
   if (!panel) return;
   const s=activeServer();
-  panel.style.display = uiState.hidden ? 'none' : 'block';
+  panel.style.setProperty('display', uiState.hidden ? 'none' : 'block', 'important');
+  panel.style.setProperty('visibility','visible','important');
+  panel.style.setProperty('z-index','2147483647','important');
   panel.style.opacity = String(uiState.opacity);
   serverBtn.textContent = uiState.server==='AUTO' ? `AUTO:${s}` : s;
 
@@ -194,7 +196,7 @@ function mount() {
 
   const style=document.createElement('style');
   style.textContent=`
-#pluto-overlay{position:fixed;right:14px;bottom:14px;z-index:2147483647;width:330px;
+#pluto-overlay{position:fixed!important;right:14px!important;bottom:14px!important;left:auto!important;top:auto!important;z-index:2147483647!important;width:330px!important;display:block!important;visibility:visible!important;pointer-events:auto!important;
 background:rgba(12,12,16,.96);color:#eee;border:1px solid #555;border-radius:11px;
 font:12px/1.35 Consolas,monospace;box-shadow:0 10px 35px #0009;user-select:none}
 #pluto-overlay .head{display:flex;align-items:center;justify-content:space-between;padding:8px 9px;border-bottom:1px solid #333;cursor:move}
@@ -213,6 +215,20 @@ font:12px/1.35 Consolas,monospace;box-shadow:0 10px 35px #0009;user-select:none}
 
   panel=document.createElement('div');
   panel.id='pluto-overlay';
+  panel.style.setProperty('position','fixed','important');
+  panel.style.setProperty('right','14px','important');
+  panel.style.setProperty('bottom','14px','important');
+  panel.style.setProperty('left','auto','important');
+  panel.style.setProperty('top','auto','important');
+  panel.style.setProperty('display','block','important');
+  panel.style.setProperty('visibility','visible','important');
+  panel.style.setProperty('opacity','1','important');
+  panel.style.setProperty('z-index','2147483647','important');
+  panel.style.setProperty('pointer-events','auto','important');
+  panel.style.setProperty('transform','none','important');
+  panel.style.setProperty('filter','none','important');
+  panel.style.setProperty('clip','auto','important');
+  panel.style.setProperty('clip-path','none','important');
   panel.innerHTML=`
     <div class="head">
       <span class="title">☢ PLUTO SPAWN HEATMAP</span>
@@ -233,7 +249,7 @@ font:12px/1.35 Consolas,monospace;box-shadow:0 10px 35px #0009;user-select:none}
       <span>P = show/hide</span>
     </div>`;
 
-  document.documentElement.appendChild(panel);
+  document.body.appendChild(panel);
   canvas=panel.querySelector('#pp-map');
   ctx=canvas.getContext('2d');
   topBox=panel.querySelector('#pp-top');
@@ -276,6 +292,8 @@ font:12px/1.35 Consolas,monospace;box-shadow:0 10px 35px #0009;user-select:none}
 }
 
 function boot() {
+  uiState.hidden = false;
+  saveUi();
   mount();
   parseText(document.body?.innerText || '');
 
