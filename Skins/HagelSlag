@@ -1,0 +1,208 @@
+
+// ==UserScript==
+// @name         Hagelslag
+// @namespace    http://tampermonkey.net/
+// @version      1.7
+// @description  Replaces character sprite and modifies animation settings
+// @author       You
+// @match        *://gameofbombs.com/*
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
+// @run-at       document-start
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const REPLACEMENTS = [
+        {
+            match: "character_gold.png",
+            url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/getskin.png",
+            blobURL: null
+        }
+    ];
+
+    // Preload replacement images
+    REPLACEMENTS.forEach(entry => {
+        GM_xmlhttpRequest({
+            method: "GET",
+            url: entry.url,
+            responseType: "blob",
+
+            onload: function (response) {
+                if (response.status < 200 || response.status >= 300) {
+                    console.error(
+                        `[TilesetReplace] HTTP ${response.status}: ${entry.url}`
+                    );
+                    return;
+                }
+
+                entry.blobURL = URL.createObjectURL(response.response);
+
+                console.log(
+                    `[TilesetReplace] Blob ready for "${entry.match}":`,
+                    entry.blobURL
+                );
+            },
+
+            onerror: function (err) {
+                console.error(
+                    `[TilesetReplace] Failed to fetch "${entry.match}":`,
+                    err
+                );
+            }
+        });
+    });
+
+    // Intercept image source assignments
+    const descriptor = Object.getOwnPropertyDescriptor(
+        HTMLImageElement.prototype,
+        'src'
+    );
+
+    if (descriptor && descriptor.set && descriptor.get) {
+        const originalSet = descriptor.set;
+        const originalGet = descriptor.get;
+
+        Object.defineProperty(HTMLImageElement.prototype, 'src', {
+            set(value) {
+                if (typeof value === 'string') {
+                    const match = REPLACEMENTS.find(entry =>
+                        value.includes(entry.match)
+                    );
+
+                    if (match) {
+                        const target = match.blobURL || match.url;
+
+                        console.log(
+                            `[TilesetReplace] Intercepted: ${value} → ${target}`
+                        );
+
+                        originalSet.call(this, target);
+                        return;
+                    }
+                }
+
+                originalSet.call(this, value);
+            },
+
+            get() {
+                return originalGet.call(this);
+            },
+
+            configurable: true,
+            enumerable: descriptor.enumerable
+        });
+    }
+
+    // Script injected into the game's page context
+    const spriteModificationScript = `
+    (function () {
+        'use strict';
+
+        let applied = false;
+
+        function applySpriteMod() {
+            if (applied) return true;
+
+            try {
+                if (
+                    !window.sprites ||
+                    !window.sprites._static ||
+                    !window.sprites._static.default2
+                ) {
+                    return false;
+                }
+
+                const spr = window.sprites._static.default2;
+
+                if (!spr.skin) return false;
+
+                spr.frameHeight = 55;
+                spr.frameWidth = 55;
+                spr.renderHeight = 45.84905660377358;
+                spr.renderWidth = 45;
+
+                spr.skin.animCountSide = 7;
+                spr.skin.animCount = 7;
+                spr.skin.frameHeight = 55;
+                spr.skin.frameWidth = 55;
+                spr.skin.idleAnimCount = 7;
+                spr.skin.idleAnimCountSide = 7;
+                spr.skin.animSpeed = 1800;
+                spr.skin.renderHeight = 45.84905660377358;
+                spr.skin.renderWidth = 45;
+                spr.skin.publicFrame = [1, 0];
+
+                applied = true;
+
+                console.log(
+                    '[SpriteMod] Sprite parameters successfully applied to default2'
+                );
+
+                return true;
+            } catch (error) {
+                console.error('[SpriteMod] Error:', error);
+                return false;
+            }
+        }
+
+        if (applySpriteMod()) return;
+
+        // Poll for sprites initialized by the game
+        const checkInterval = setInterval(function () {
+            if (applySpriteMod()) {
+                clearInterval(checkInterval);
+            }
+        }, 250);
+
+        // Stop polling after 30 seconds
+        setTimeout(function () {
+            clearInterval(checkInterval);
+
+            if (!applied) {
+                console.warn(
+                    '[SpriteMod] default2 was not found within 30 seconds'
+                );
+            }
+        }, 30000);
+    })();
+    `;
+
+    function injectScript(code) {
+        const script = document.createElement('script');
+        script.textContent = code;
+
+        const target = document.head || document.documentElement;
+
+        if (!target) {
+            return false;
+        }
+
+        target.appendChild(script);
+        script.remove();
+
+        return true;
+    }
+
+    // Inject as early as possible
+    function startInjection() {
+        if (injectScript(spriteModificationScript)) {
+            return;
+        }
+
+        const observer = new MutationObserver(function () {
+            if (injectScript(spriteModificationScript)) {
+                observer.disconnect();
+            }
+        });
+
+        observer.observe(document, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    startInjection();
+
+})();
