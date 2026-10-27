@@ -17,7 +17,7 @@
     const REPLACEMENTS = [
         {
             match: "character_gold.png",
-            url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var3.png",
+            url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var8.png",
             blobURL: null
         }
     ];
@@ -27,7 +27,7 @@
         const replacements = [
             {
                 match: "character_gold.png",
-                url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var3.png"
+                url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var8.png"
             }
         ];
 
