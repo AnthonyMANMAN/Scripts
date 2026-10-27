@@ -1,0 +1,144 @@
+
+// ==UserScript==
+// @name         Goku Sprite Replacement
+// @namespace    http://tampermonkey.net/
+// @version      2.0
+// @description  Replaces character_gold.png with Goku and applies custom sprite settings
+// @author       You
+// @match        *://gameofbombs.com/*
+// @grant        none
+// @run-at       document-start
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const TARGET = 'character_gold.png';
+
+    const IMAGE_URL =
+        'https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/goku.png';
+
+    // Intercept the original character image
+    function installImageHook() {
+        const descriptor = Object.getOwnPropertyDescriptor(
+            HTMLImageElement.prototype,
+            'src'
+        );
+
+        if (!descriptor || !descriptor.set || !descriptor.get) {
+            console.error('[Goku] Image src hook unavailable.');
+            return;
+        }
+
+        const originalSet = descriptor.set;
+        const originalGet = descriptor.get;
+
+        Object.defineProperty(HTMLImageElement.prototype, 'src', {
+            configurable: true,
+            enumerable: descriptor.enumerable,
+
+            set(value) {
+                if (
+                    typeof value === 'string' &&
+                    value.includes(TARGET)
+                ) {
+                    console.log('[Goku] Replacing:', value, '→', IMAGE_URL);
+                    return originalSet.call(this, IMAGE_URL);
+                }
+
+                return originalSet.call(this, value);
+            },
+
+            get() {
+                return originalGet.call(this);
+            }
+        });
+
+        // Also support img.setAttribute('src', ...)
+        const originalSetAttribute =
+            HTMLImageElement.prototype.setAttribute;
+
+        HTMLImageElement.prototype.setAttribute = function (name, value) {
+            if (
+                String(name).toLowerCase() === 'src' &&
+                typeof value === 'string' &&
+                value.includes(TARGET)
+            ) {
+                value = IMAGE_URL;
+            }
+
+            return originalSetAttribute.call(this, name, value);
+        };
+
+        console.log('[Goku] Image replacement hook installed.');
+    }
+
+    function applySpriteMod() {
+        const spr = window.sprites?._static?.default2;
+
+        if (!spr || !spr.skin) {
+            return false;
+        }
+
+        // Original Goku sprite settings
+        spr.frameHeight = 78;
+        spr.frameWidth = 72;
+
+        spr.renderHeight = 50.916666666666664;
+        spr.renderShiftX = 0;
+        spr.renderShiftY = -9;
+        spr.renderWidth = 47;
+
+        spr.shad = [38, 71, 33, 15];
+
+        // Animation settings
+        spr.skin.animCountSide = 4;
+        spr.skin.animMirrorLeft = true;
+
+        spr.skin.frameHeight = 78;
+        spr.skin.frameWidth = 72;
+
+        spr.skin.animSpeed = 2000;
+
+        // Idle animation
+        spr.skin.idleAnim = true;
+        spr.skin.idleAnimCount = 4;
+        spr.skin.idleAnimCountSide = 4;
+        spr.skin.idleAnimSpeed = 2000;
+
+        // Direction mapping
+        spr.skin.lookLut = [0, 1, 2, 1];
+
+        // Render settings
+        spr.skin.renderHeight = 50.916666666666664;
+        spr.skin.renderWidth = 47;
+        spr.skin.renderShiftY = -5;
+        spr.skin.soulWidth = 72;
+
+        console.log('[Goku] Sprite parameters applied to default2.');
+
+        return true;
+    }
+
+    function startSpriteWatcher() {
+        // Check immediately
+        if (applySpriteMod()) return;
+
+        // Check periodically until the game initializes
+        const interval = setInterval(() => {
+            if (applySpriteMod()) {
+                clearInterval(interval);
+            }
+        }, 250);
+
+        // Stop checking after 30 seconds
+        setTimeout(() => {
+            clearInterval(interval);
+        }, 30000);
+    }
+
+    // Install hooks as early as possible
+    installImageHook();
+    startSpriteWatcher();
+
+})();
