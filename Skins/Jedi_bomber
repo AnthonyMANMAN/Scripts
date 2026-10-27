@@ -18,7 +18,7 @@
 
      // Change this URL to use another skin
      const IMAGE_URL =
-         'https://raw.githubusercontent.com/Kix34/Scripts/refs/heads/main/jedi-bomber.png';
+         'https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/neverm0re.png';
 
      // This hook runs in the page's JavaScript context.
      function installPageHook(target, replacementURL) {
