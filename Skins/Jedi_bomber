@@ -1,0 +1,88 @@
+
+ // ==UserScript==
+ // @name         Jedi Bomber Sprite Replacement
+ // @namespace    http://tampermonkey.net/
+ // @version      2.0
+ // @description  Replaces angelina_64x64_old.png without changing animations
+ // @author       You
+ // @match        *://gameofbombs.com/*
+ // @grant        GM_xmlhttpRequest
+ // @connect      raw.githubusercontent.com
+ // @run-at       document-start
+ // ==/UserScript==
+
+ (function () {
+     'use strict';
+
+     const TARGET = 'angelina_64x64_old.png';
+
+     // Change this URL to use another skin
+     const IMAGE_URL =
+         'https://raw.githubusercontent.com/Kix34/Scripts/refs/heads/main/jedi-bomber.png';
+
+     // This hook runs in the page's JavaScript context.
+     function installPageHook(target, replacementURL) {
+         const descriptor = Object.getOwnPropertyDescriptor(
+             HTMLImageElement.prototype,
+             'src'
+         );
+
+         if (!descriptor?.set || !descriptor?.get) return;
+
+         const originalSet = descriptor.set;
+         const originalGet = descriptor.get;
+
+         Object.defineProperty(HTMLImageElement.prototype, 'src', {
+             configurable: true,
+             enumerable: descriptor.enumerable,
+
+             set(value) {
+                 if (typeof value === 'string' &&
+                     value.includes(target)) {
+
+                     console.log(
+                         '[TilesetReplace] Replaced:',
+                         value,
+                         '→',
+                         replacementURL
+                     );
+
+                     return originalSet.call(this, replacementURL);
+                 }
+
+                 return originalSet.call(this, value);
+             },
+
+             get() {
+                 return originalGet.call(this);
+             }
+         });
+
+         console.log('[TilesetReplace] Hook installed:', target);
+     }
+
+     // Inject into the game page.
+     function inject() {
+         const script = document.createElement('script');
+
+         script.textContent =
+             `(${installPageHook.toString()})(${JSON.stringify(TARGET)}, ${JSON.stringify(IMAGE_URL)});`;
+
+         (document.head || document.documentElement)
+             .appendChild(script);
+
+         script.remove();
+     }
+
+     if (document.documentElement) {
+         inject();
+     } else {
+         const observer = new MutationObserver(() => {
+             if (!document.documentElement) return;
+             observer.disconnect();
+             inject();
+         });
+
+         observer.observe(document, { childList: true });
+     }
+ })();
