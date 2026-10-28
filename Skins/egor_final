@@ -1,0 +1,235 @@
+
+// ==UserScript==
+// @name         Pwnyy
+// @namespace    http://tampermonkey.net/
+// @version      1.7
+// @description  Replaces character sprite and modifies rendering
+// @author       You
+// @match        *://gameofbombs.com/*
+// @grant        GM_xmlhttpRequest
+// @connect      raw.githubusercontent.com
+// @run-at       document-start
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const REPLACEMENTS = [
+        {
+            match: "character_gold.png",
+            url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/extrakt.png",
+            blobURL: null
+        }
+    ];
+
+    // Replace images in the page's JavaScript context.
+    function pageHook() {
+        const replacements = [
+            {
+                match: "character_gold.png",
+                url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/extrakt.png"
+            }
+        ];
+
+        const descriptor = Object.getOwnPropertyDescriptor(
+            HTMLImageElement.prototype,
+            'src'
+        );
+
+        if (!descriptor || !descriptor.set) return;
+
+        const originalSet = descriptor.set;
+        const originalGet = descriptor.get;
+
+        Object.defineProperty(HTMLImageElement.prototype, 'src', {
+            configurable: true,
+            enumerable: descriptor.enumerable,
+
+            set(value) {
+                if (typeof value === 'string') {
+                    const match = replacements.find(
+                        entry => value.includes(entry.match)
+                    );
+
+                    if (match) {
+                        const target = match.blobURL || match.url;
+
+                        console.log(
+                            `[TilesetReplace] Intercepted: ${value} → ${target}`
+                        );
+
+                        originalSet.call(this, target);
+                        return;
+                    }
+                }
+
+                originalSet.call(this, value);
+            },
+
+            get() {
+                return originalGet.call(this);
+            }
+        });
+
+        // Receive downloaded image URLs from Tampermonkey.
+        window.addEventListener('PwnyyBlobReady', function (event) {
+            const detail = event.detail;
+            if (!detail) return;
+
+            const entry = replacements.find(
+                item => item.match === detail.match
+            );
+
+            if (entry && typeof detail.blobURL === 'string') {
+                entry.blobURL = detail.blobURL;
+                console.log('[TilesetReplace] Blob ready:', entry.match);
+            }
+        });
+
+        // Apply original sprite parameters.
+        function applySpriteMod() {
+            const spr = window.sprites?._static?.default2;
+
+            if (!spr || !spr.skin) return false;
+
+            spr.frameHeight = 32;
+            spr.frameWidth = 32;
+            spr.renderHeight = 40;
+            spr.renderShiftX = 0;
+            spr.renderShiftY = -4;
+            spr.renderWidth = 40;
+            spr.shad = [39, 67, 41, 17];
+
+            spr.skin.animCountSide = 4;
+            spr.skin.animMirrorLeft = true;
+            spr.skin.animSpeed = 2000;
+            spr.skin.frameHeight = 32;
+            spr.skin.frameWidth = 32;
+            spr.skin.idleAnim = true;
+            spr.skin.hasSoul = true;
+            spr.skin.soulWidth = 32;
+            spr.skin.idleAnimCount = 4;
+            spr.skin.idleAnimCountSide = 4;
+            spr.skin.idleAnimSpeed = 4000;
+            spr.skin.idlePauseMax = 200;
+            spr.skin.idlePauseMin = 200;
+            spr.skin.lookLut = [0, 1, 2, 1];
+            spr.skin.publicFrame = [4, 0];
+            spr.skin.renderHeight = 40;
+            spr.skin.renderWidth = 40;
+
+
+            console.log(
+                '[SpriteMod] Sprite parameters applied to default2'
+            );
+
+            return true;
+        }
+
+        if (applySpriteMod()) return;
+
+        let interval = null;
+        let observer = null;
+
+        function checkSprite() {
+            if (applySpriteMod()) {
+                if (interval !== null) clearInterval(interval);
+                if (observer) observer.disconnect();
+            }
+        }
+
+        function startObserver() {
+            if (!document.documentElement) return;
+
+            observer = new MutationObserver(checkSprite);
+
+            observer.observe(document.documentElement, {
+                childList: true,
+                subtree: true
+            });
+        }
+
+        if (document.documentElement) {
+            startObserver();
+        } else {
+            document.addEventListener(
+                'DOMContentLoaded',
+                startObserver,
+                { once: true }
+            );
+        }
+
+        interval = setInterval(checkSprite, 500);
+
+        setTimeout(function () {
+            if (interval !== null) clearInterval(interval);
+            if (observer) observer.disconnect();
+        }, 30000);
+    }
+
+    // Inject early into the game context.
+    function injectScript(fn) {
+        const script = document.createElement('script');
+        script.textContent = `(${fn.toString()})();`;
+
+        const parent = document.head || document.documentElement;
+
+        if (parent) {
+            parent.appendChild(script);
+            script.remove();
+        } else {
+            document.addEventListener(
+                'DOMContentLoaded',
+                () => {
+                    document.documentElement.appendChild(script);
+                    script.remove();
+                },
+                { once: true }
+            );
+        }
+    }
+
+    injectScript(pageHook);
+
+    // Preload replacement images.
+    REPLACEMENTS.forEach(entry => {
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: entry.url,
+            responseType: 'blob',
+
+            onload(response) {
+                if (response.status < 200 || response.status >= 300) {
+                    console.error(
+                        '[TilesetReplace] HTTP error:',
+                        response.status
+                    );
+                    return;
+                }
+
+                const blobURL = URL.createObjectURL(response.response);
+                entry.blobURL = blobURL;
+
+                window.dispatchEvent(
+                    new CustomEvent('PwnyyBlobReady', {
+                        detail: {
+                            match: entry.match,
+                            blobURL: blobURL
+                        }
+                    })
+                );
+
+                console.log(
+                    `[TilesetReplace] Blob ready for "${entry.match}"`
+                );
+            },
+
+            onerror(error) {
+                console.error(
+                    `[TilesetReplace] Failed to fetch "${entry.match}"`,
+                    error
+                );
+            }
+        });
+    });
+})();
