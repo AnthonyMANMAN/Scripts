@@ -17,7 +17,7 @@
     const REPLACEMENTS = [
         {
             match: "character_gold.png",
-            url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var8.png",
+            url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var10.png",
             blobURL: null
         }
     ];
@@ -27,7 +27,7 @@
         const replacements = [
             {
                 match: "character_gold.png",
-                url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var8.png"
+                url: "https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Skins/var10.png"
             }
         ];
 
@@ -102,7 +102,7 @@
 
             spr.skin.animCountSide = 4;
             spr.skin.animMirrorLeft = true;
-            spr.skin.animSpeed = 2400;
+            spr.skin.animSpeed = 3200;
             spr.skin.frameHeight = 32;
             spr.skin.frameWidth = 32;
             spr.skin.idleAnim = true;
