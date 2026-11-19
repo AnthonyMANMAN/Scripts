@@ -1,0 +1,53 @@
+// ==UserScript==
+// @name         Game of Bombs — Tileset Replacement
+// @namespace    http://tampermonkey.net/
+// @version      1.0.0
+// @description  Replaces the winter tileset with a custom tileset.
+// @match        https://gameofbombs.com/*
+// @match        http://gameofbombs.com/*
+// @run-at       document-start
+// @grant        none
+// ==/UserScript==
+
+(() => {
+    'use strict';
+
+    const originalTileset = 'tileset-winter.png?v=2';
+    const replacementTileset = 'https://raw.githubusercontent.com/AnthonyMANMAN/Scripts/refs/heads/main/Reskins/tileset_Egyptian.png';
+
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    if (!descriptor?.get || !descriptor?.set) return;
+
+    const nativeGet = descriptor.get;
+    const nativeSet = descriptor.set;
+    let cachedTileset = null;
+
+    fetch(replacementTileset, { cache: 'force-cache', mode: 'cors' })
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.blob();
+        })
+        .then(blob => {
+            cachedTileset = URL.createObjectURL(blob);
+        })
+        .catch(error => {
+            console.warn('[Tileset Replacement] Preload failed; using direct URL.', error);
+        });
+
+    Object.defineProperty(HTMLImageElement.prototype, 'src', {
+        configurable: true,
+        enumerable: descriptor.enumerable,
+        get: nativeGet,
+        set(value) {
+            if (String(value ?? '').includes(originalTileset)) {
+                nativeSet.call(this, cachedTileset || replacementTileset);
+                return;
+            }
+            nativeSet.call(this, value);
+        }
+    });
+
+    window.addEventListener('beforeunload', () => {
+        if (cachedTileset) URL.revokeObjectURL(cachedTileset);
+    }, { once: true });
+})();
